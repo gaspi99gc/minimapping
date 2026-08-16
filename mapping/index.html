@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>MiniMapper</title>
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #000; overflow: hidden;
+    font-family: system-ui, sans-serif; color: #ddd; user-select: none; }
+
+  /* ---- escenario ---- */
+  #stage { position: fixed; inset: 0; background: #000; z-index: 0; }
+  .layer { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+  .layer video, .layer img, .layer canvas, .layer .fill {
+    width: 100%; height: 100%; object-fit: fill; display: block; }
+  .layer .fill { display: flex; align-items: center; justify-content: center;
+    font-size: 40px; color: #888; text-align: center; }
+
+  /* ---- overlay de edición ---- */
+  #wires { position: fixed; inset: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 10; }
+  #handles { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
+  .handle { position: fixed; width: 26px; height: 26px; margin: -13px;
+    border-radius: 50%; border: 2px solid #4ecbff; background: rgba(0,0,0,.55);
+    cursor: grab; pointer-events: auto; }
+  .handle.active { background: #4ecbff; }
+
+  /* ---- panel ---- */
+  #panel { position: fixed; top: 12px; right: 12px; width: 270px; z-index: 30;
+    background: rgba(18,18,22,.92); border: 1px solid #333; border-radius: 10px;
+    padding: 12px; font-size: 13px; max-height: calc(100vh - 24px); overflow-y: auto; }
+  #panel header { display: flex; justify-content: space-between; align-items: center;
+    font-weight: 700; font-size: 15px; margin-bottom: 10px; }
+  #panel button { background: #2a2a32; color: #ddd; border: 1px solid #444;
+    border-radius: 6px; padding: 5px 8px; cursor: pointer; font-size: 12px; }
+  #panel button:hover { background: #3a3a44; }
+  #btnProject { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+  .row { display: flex; gap: 6px; margin-bottom: 10px; }
+  .row button { flex: 1; }
+
+  #layerList { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+  .item { display: flex; align-items: center; gap: 6px; padding: 5px 6px;
+    border-radius: 6px; border: 1px solid transparent; cursor: pointer; }
+  .item.sel { border-color: #4ecbff; background: rgba(78,203,255,.08); }
+  .item .name { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .item button { padding: 2px 5px; font-size: 11px; }
+
+  #props { border-top: 1px solid #333; padding-top: 10px; display: flex;
+    flex-direction: column; gap: 8px; }
+  #props:empty { display: none; }
+  #props label { display: flex; align-items: center; gap: 8px; }
+  #props input[type=range] { flex: 1; }
+  #props input[type=color] { width: 100%; height: 28px; border: none;
+    background: none; cursor: pointer; }
+
+  /* ---- extras ---- */
+  #help { position: fixed; left: 12px; bottom: 12px; z-index: 30; font-size: 12px;
+    color: #999; background: rgba(18,18,22,.85); padding: 6px 10px;
+    border-radius: 8px; border: 1px solid #333; }
+  #empty { position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; z-index: 5; color: #555;
+    font-size: 26px; text-align: center; pointer-events: none; }
+  #empty small { font-size: 15px; margin-top: 8px; }
+  #dropHint { position: fixed; inset: 0; display: none; align-items: center;
+    justify-content: center; z-index: 40; font-size: 34px; color: #4ecbff;
+    background: rgba(10,20,30,.7); border: 3px dashed #4ecbff; pointer-events: none; }
+
+  /* ---- modo proyección: solo queda el escenario ---- */
+  body.projecting { cursor: none; }
+  body.projecting #panel, body.projecting #wires, body.projecting #handles,
+  body.projecting #help, body.projecting #empty { display: none; }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+<svg id="wires"></svg>
+<div id="handles"></div>
+
+<div id="panel">
+  <header>MiniMapper <button id="btnProject" title="Tab">Proyectar ▶</button></header>
+  <div class="row">
+    <button id="btnAddFile">+ Video/Imagen</button>
+    <button id="btnAddGrid">+ Grilla</button>
+    <button id="btnAddColor">+ Color</button>
+  </div>
+  <div id="layerList"></div>
+  <div id="props"></div>
+</div>
+
+<div id="help">Tab proyectar · F fullscreen · Rueda escala · Shift+rueda rota · Flechas ajuste fino (Shift ×10) · Supr borrar capa · Espacio play/pausa · R reset esquinas</div>
+<div id="empty">Arrastrá un video acá<br><small>o usá los botones del panel →</small></div>
+<div id="dropHint">Soltá el archivo</div>
+<input type="file" id="fileInput" hidden multiple accept="video/*,image/*">
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const stage = $('#stage'), wires = $('#wires'), handlesBox = $('#handles');
+
+const BASE_W = 960, BASE_H = 540;   // tamaño "fuente" de toda capa antes del warp
+const KEY = 'minimapper-project';
+
+let layers = [];        // [{id,type,name,corners,opacity,visible,muted,color,el,media}]
+let selectedId = null;
+let activeCorner = null; // índice de esquina activa (para flechas)
+let editMode = true;
+let drag = null;
+
+/* ================= homografía: 4 esquinas -> matrix3d =================
+   Método clásico: base que mapea el cuadrado unitario a cada cuadrilátero,
+   después destino x adj(origen). */
+function adj(m) {
+  return [
+    m[4]*m[8]-m[5]*m[7], m[2]*m[7]-m[1]*m[8], m[1]*m[5]-m[2]*m[4],
+    m[5]*m[6]-m[3]*m[8], m[0]*m[8]-m[2]*m[6], m[2]*m[3]-m[0]*m[5],
+    m[3]*m[7]-m[4]*m[6], m[1]*m[6]-m[0]*m[7], m[0]*m[4]-m[1]*m[3]
+  ];
+}
+function multmm(a, b) {
+  const c = [];
+  for (let i = 0; i < 3; i++)
+    for (let j = 0; j < 3; j++) {
+      let s = 0;
+      for (let k = 0; k < 3; k++) s += a[3*i+k] * b[3*k+j];
+      c[3*i+j] = s;
+    }
+  return c;
+}
+function multmv(m, v) {
+  return [m[0]*v[0]+m[1]*v[1]+m[2]*v[2],
+          m[3]*v[0]+m[4]*v[1]+m[5]*v[2],
+          m[6]*v[0]+m[7]*v[1]+m[8]*v[2]];
+}
+function basisToPoints(x1,y1, x2,y2, x3,y3, x4,y4) {
+  const m = [x1,x2,x3, y1,y2,y3, 1,1,1];
+  const v = multmv(adj(m), [x4, y4, 1]);
+  return multmm(m, [v[0],0,0, 0,v[1],0, 0,0,v[2]]);
+}
+// c = esquinas destino en px, orden TL,TR,BR,BL
+function matrix3dFor(c) {
+  const s = basisToPoints(0,0, BASE_W,0, BASE_W,BASE_H, 0,BASE_H);
+  const d = basisToPoints(c[0][0],c[0][1], c[1][0],c[1][1], c[2][0],c[2][1], c[3][0],c[3][1]);
+  const t = multmm(d, adj(s));
+  for (let i = 0; i < 9; i++) t[i] /= t[8];
+  return `matrix3d(${t[0]},${t[3]},0,${t[6]}, ${t[1]},${t[4]},0,${t[7]}, 0,0,1,0, ${t[2]},${t[5]},0,${t[8]})`;
+}
+
+/* ================= capas ================= */
+// rectángulo centrado con la proporción pedida, al 50% del ancho de pantalla
+function defaultCorners(aspect) {
+  let wpx = innerWidth * 0.5;
+  let hpx = wpx / aspect;
+  if (hpx > innerHeight * 0.8) { hpx = innerHeight * 0.8; wpx = hpx * aspect; }
+  const w = wpx / innerWidth, h = hpx / innerHeight;
+  const x = (1-w)/2, y = (1-h)/2;
+  return [[x,y],[x+w,y],[x+w,y+h],[x,y+h]];   // TL,TR,BR,BL normalizado 0-1
+}
+
+function newLayer(type, name) {
+  return {
+    id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+    type, name,
+    corners: defaultCorners(16/9),
+    aspect: 16/9,     // proporción real del contenido (se detecta al cargar)
+    touched: false,   // true apenas el usuario mueve/deforma la capa
+    opacity: 1, visible: true, muted: true, color: '#ffffff',
+    el: null, media: null
+  };
+}
+
+// al conocer la proporción real del video/imagen, si la capa está intacta
+// se reacomoda para que se vea sin deformar
+function setAspect(l, a) {
+  if (!a || !isFinite(a)) return;
+  l.aspect = a;
+  if (!l.touched) {
+    l.corners = defaultCorners(a);
+    applyTransform(l); updateOverlay();
+  }
+  save();
+}
+
+function cornersPx(l) {
+  return l.corners.map(c => [c[0]*innerWidth, c[1]*innerHeight]);
+}
+
+function applyTransform(l) {
+  l.el.style.transform = matrix3dFor(cornersPx(l));
+}
+
+function buildElement(l, blob) {
+  const el = document.createElement('div');
+  el.className = 'layer';
+  el.style.width = BASE_W + 'px';
+  el.style.height = BASE_H + 'px';
+  let inner;
+  if (l.type === 'video') {
+    if (blob) {
+      inner = document.createElement('video');
+      inner.src = URL.createObjectURL(blob);
+      inner.loop = true;
+      inner.muted = l.muted;
+      inner.autoplay = true;
+      inner.playsInline = true;
+      inner.onloadedmetadata = () => setAspect(l, inner.videoWidth / inner.videoHeight);
+      inner.play().catch(() => { inner.muted = true; l.muted = true; });
+    } else {
+      inner = missing(l.name);
+    }
+  } else if (l.type === 'image') {
+    if (blob) {
+      inner = document.createElement('img');
+      inner.src = URL.createObjectURL(blob);
+      inner.onload = () => setAspect(l, inner.naturalWidth / inner.naturalHeight);
+    } else {
+      inner = missing(l.name);
+    }
+  } else if (l.type === 'grid') {
+    inner = document.createElement('canvas');
+    drawGrid(inner);
+  } else { // color
+    inner = document.createElement('div');
+    inner.className = 'fill';
+    inner.style.background = l.color;
+  }
+  l.media = inner;
+  el.appendChild(inner);
+  l.el = el;
+  syncLayerStyle(l);
+  applyTransform(l);
+}
+
+function missing(name) {
+  const d = document.createElement('div');
+  d.className = 'fill';
+  d.style.background = '#222';
+  d.textContent = '⚠ falta el archivo\n' + name;
+  d.style.whiteSpace = 'pre-wrap';
+  return d;
+}
+
+function syncLayerStyle(l) {
+  l.el.style.opacity = l.opacity;
+  l.el.style.display = l.visible ? '' : 'none';
+}
+
+function drawGrid(cv) {
+  cv.width = BASE_W; cv.height = BASE_H;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, BASE_W, BASE_H);
+  g.strokeStyle = '#fff'; g.lineWidth = 1;
+  for (let x = 0; x <= BASE_W; x += 60) { g.beginPath(); g.moveTo(x+.5, 0); g.lineTo(x+.5, BASE_H); g.stroke(); }
+  for (let y = 0; y <= BASE_H; y += 60) { g.beginPath(); g.moveTo(0, y+.5); g.lineTo(BASE_W, y+.5); g.stroke(); }
+  g.lineWidth = 2;
+  g.beginPath(); g.moveTo(0, 0); g.lineTo(BASE_W, BASE_H); g.stroke();
+  g.beginPath(); g.moveTo(BASE_W, 0); g.lineTo(0, BASE_H); g.stroke();
+  g.beginPath(); g.arc(BASE_W/2, BASE_H/2, 150, 0, Math.PI*2); g.stroke();
+  g.lineWidth = 6; g.strokeRect(3, 3, BASE_W-6, BASE_H-6);
+}
+
+function addLayerFromFile(file) {
+  const type = file.type.startsWith('video') ? 'video' : 'image';
+  const l = newLayer(type, file.name);
+  buildElement(l, file);
+  layers.push(l);
+  selectedId = l.id; activeCorner = null;
+  putFile(l.id, file).catch(() =>
+    console.warn('No se pudo guardar el archivo para la próxima sesión'));
+  renderAll(); save();
+}
+
+function addSimpleLayer(type) {
+  const l = newLayer(type, type === 'grid' ? 'Grilla' : 'Color');
+  buildElement(l, null);
+  layers.push(l);
+  selectedId = l.id; activeCorner = null;
+  renderAll(); save();
+}
+
+function deleteLayer(l) {
+  if (l.media && l.media.src && l.media.src.startsWith('blob:'))
+    URL.revokeObjectURL(l.media.src);
+  l.el.remove();
+  delFile(l.id);
+  layers = layers.filter(x => x.id !== l.id);
+  if (selectedId === l.id) { selectedId = null; activeCorner = null; }
+  renderAll(); save();
+}
+
+const selected = () => layers.find(l => l.id === selectedId) || null;
+
+/* ================= persistencia ================= */
+function save() {
+  const meta = layers.map(l => ({
+    id: l.id, type: l.type, name: l.name, corners: l.corners,
+    aspect: l.aspect, touched: l.touched,
+    opacity: l.opacity, visible: l.visible, muted: l.muted, color: l.color
+  }));
+  try { localStorage.setItem(KEY, JSON.stringify({ layers: meta })); } catch (e) {}
+}
+
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('minimapper', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('files');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function putFile(id, blob) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction('files', 'readwrite');
+    tx.objectStore('files').put(blob, id);
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+}
+async function getFile(id) {
+  const db = await idb();
+  return new Promise(res => {
+    const rq = db.transaction('files').objectStore('files').get(id);
+    rq.onsuccess = () => res(rq.result || null);
+    rq.onerror = () => res(null);
+  });
+}
+async function delFile(id) {
+  try {
+    const db = await idb();
+    db.transaction('files', 'readwrite').objectStore('files').delete(id);
+  } catch (e) {}
+}
+
+async function restore() {
+  let data = null;
+  try { data = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
+  if (!data || !data.layers) return;
+  for (const m of data.layers) {
+    const l = Object.assign(newLayer(m.type, m.name), m, { el: null, media: null });
+    if (m.touched === undefined) l.touched = true;   // proyectos viejos: no reacomodar
+    const blob = (m.type === 'video' || m.type === 'image') ? await getFile(m.id) : null;
+    buildElement(l, blob);
+    layers.push(l);
+  }
+  renderAll();
+}
+
+/* ================= render UI ================= */
+function renderAll() {
+  // z-order: layers[0] abajo
+  for (const l of layers) stage.appendChild(l.el);
+  $('#empty').style.display = layers.length ? 'none' : '';
+  renderList();
+  renderProps();
+  updateOverlay();
+}
+
+function renderList() {
+  const box = $('#layerList');
+  box.innerHTML = '';
+  // arriba de la lista = capa de más arriba
+  [...layers].reverse().forEach(l => {
+    const i = layers.indexOf(l);
+    const item = document.createElement('div');
+    item.className = 'item' + (l.id === selectedId ? ' sel' : '');
+    item.onclick = () => { selectedId = l.id; activeCorner = null; renderAll(); };
+
+    const eye = btn(l.visible ? '👁' : '—', 'mostrar/ocultar', e => {
+      e.stopPropagation(); l.visible = !l.visible; syncLayerStyle(l); renderAll(); save();
+    });
+    const name = document.createElement('span');
+    name.className = 'name'; name.textContent = l.name; name.title = l.name;
+    const up = btn('↑', 'subir', e => {
+      e.stopPropagation();
+      if (i < layers.length - 1) { [layers[i], layers[i+1]] = [layers[i+1], layers[i]]; renderAll(); save(); }
+    });
+    const down = btn('↓', 'bajar', e => {
+      e.stopPropagation();
+      if (i > 0) { [layers[i], layers[i-1]] = [layers[i-1], layers[i]]; renderAll(); save(); }
+    });
+    const del = btn('🗑', 'borrar', e => { e.stopPropagation(); deleteLayer(l); });
+
+    item.append(eye, name, up, down, del);
+    box.appendChild(item);
+  });
+}
+
+function btn(txt, title, fn) {
+  const b = document.createElement('button');
+  b.textContent = txt; b.title = title; b.onclick = fn;
+  return b;
+}
+
+function renderProps() {
+  const box = $('#props');
+  box.innerHTML = '';
+  const l = selected();
+  if (!l) return;
+
+  const lab = document.createElement('label');
+  lab.textContent = 'Opacidad';
+  const r = document.createElement('input');
+  r.type = 'range'; r.min = 0; r.max = 100; r.value = Math.round(l.opacity * 100);
+  r.oninput = () => { l.opacity = r.value / 100; syncLayerStyle(l); };
+  r.onchange = save;
+  lab.appendChild(r);
+  box.appendChild(lab);
+
+  if (l.type === 'video' && l.media && l.media.tagName === 'VIDEO') {
+    box.appendChild(btn(l.muted ? '🔇 Sonido: no' : '🔊 Sonido: sí', 'activar/desactivar audio', () => {
+      l.muted = !l.muted; l.media.muted = l.muted;
+      if (!l.muted) l.media.play().catch(() => {});
+      renderProps(); save();
+    }));
+  }
+  if (l.type === 'color') {
+    const c = document.createElement('input');
+    c.type = 'color'; c.value = l.color;
+    c.oninput = () => { l.color = c.value; l.media.style.background = c.value; };
+    c.onchange = save;
+    box.appendChild(c);
+  }
+  box.appendChild(btn('Reset esquinas (R)', 'volver al rectángulo inicial', () => resetCorners(l)));
+}
+
+function resetCorners(l) {
+  l.corners = defaultCorners(l.aspect || 16/9);
+  l.touched = false;
+  applyTransform(l); updateOverlay(); save();
+}
+
+/* contornos + handles */
+let selPoly = null;   // polígono de la capa seleccionada, para moverlo sin reconstruir
+function updateOverlay() {
+  if (!editMode) return;
+  wires.innerHTML = '';
+  handlesBox.innerHTML = '';
+  selPoly = null;
+  for (const l of layers) {
+    if (!l.visible) continue;
+    const pts = cornersPx(l);
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    poly.setAttribute('points', pts.map(p => p.join(',')).join(' '));
+    poly.setAttribute('fill', 'none');
+    poly.setAttribute('stroke', l.id === selectedId ? '#4ecbff' : 'rgba(255,255,255,.18)');
+    poly.setAttribute('stroke-width', l.id === selectedId ? 1.5 : 1);
+    if (l.id === selectedId) selPoly = poly;
+    wires.appendChild(poly);
+  }
+  const l = selected();
+  if (!l || !l.visible) return;
+  cornersPx(l).forEach((p, idx) => {
+    const h = document.createElement('div');
+    h.className = 'handle' + (idx === activeCorner ? ' active' : '');
+    h.style.left = p[0] + 'px';
+    h.style.top = p[1] + 'px';
+    h.addEventListener('pointerdown', e => {
+      e.stopPropagation(); e.preventDefault();
+      activeCorner = idx;
+      drag = { mode: 'corner', layer: l, idx, x0: e.clientX, y0: e.clientY,
+               start: [...l.corners[idx]] };
+      h.setPointerCapture(e.pointerId);
+      handlesBox.querySelectorAll('.handle.active').forEach(x => x.classList.remove('active'));
+      h.classList.add('active');
+    });
+    handlesBox.appendChild(h);
+  });
+}
+
+/* mover contorno + handles de la capa seleccionada sin reconstruir el DOM */
+function repositionOverlay(l) {
+  const pts = cornersPx(l);
+  if (selPoly) selPoly.setAttribute('points', pts.map(p => p.join(',')).join(' '));
+  [...handlesBox.children].forEach((h, idx) => {
+    h.style.left = pts[idx][0] + 'px';
+    h.style.top = pts[idx][1] + 'px';
+  });
+}
+
+/* ================= interacción ================= */
+function pointInQuad(px, py, c) {
+  let inside = false;
+  for (let i = 0, j = 3; i < 4; j = i++) {
+    const xi = c[i][0], yi = c[i][1], xj = c[j][0], yj = c[j][1];
+    if (((yi > py) !== (yj > py)) && (px < (xj-xi)*(py-yi)/(yj-yi)+xi)) inside = !inside;
+  }
+  return inside;
+}
+function topLayerAt(x, y) {
+  for (let i = layers.length - 1; i >= 0; i--)
+    if (layers[i].visible && pointInQuad(x, y, cornersPx(layers[i]))) return layers[i];
+  return null;
+}
+
+stage.addEventListener('pointerdown', e => {
+  if (!editMode) return;
+  const hit = topLayerAt(e.clientX, e.clientY);
+  if (hit) {
+    selectedId = hit.id; activeCorner = null;
+    drag = { mode: 'move', layer: hit, x0: e.clientX, y0: e.clientY,
+             start: hit.corners.map(c => [...c]) };
+    stage.setPointerCapture(e.pointerId);
+  } else {
+    selectedId = null; activeCorner = null;
+  }
+  renderAll();
+});
+
+window.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = (e.clientX - drag.x0) / innerWidth;
+  const dy = (e.clientY - drag.y0) / innerHeight;
+  drag.layer.touched = true;
+  if (drag.mode === 'corner') {
+    drag.layer.corners[drag.idx] = [drag.start[0] + dx, drag.start[1] + dy];
+  } else {
+    drag.layer.corners = drag.start.map(c => [c[0] + dx, c[1] + dy]);
+  }
+  applyTransform(drag.layer);
+  repositionOverlay(drag.layer);
+});
+window.addEventListener('pointerup', () => { if (drag) { drag = null; save(); } });
+
+/* rueda = escalar, Shift+rueda = rotar (nunca deforman: la proporción se mantiene) */
+window.addEventListener('wheel', e => {
+  if (!editMode) return;
+  if (e.target.closest && e.target.closest('#panel')) return;
+  const l = selected();
+  if (!l || !l.visible) return;
+  e.preventDefault();
+  const pts = cornersPx(l);
+  const cx = (pts[0][0] + pts[1][0] + pts[2][0] + pts[3][0]) / 4;
+  const cy = (pts[0][1] + pts[1][1] + pts[2][1] + pts[3][1]) / 4;
+  const d = e.deltaY || e.deltaX;   // con Shift muchos mouse reportan deltaX
+  let out;
+  if (e.shiftKey) {
+    const a = (d > 0 ? 1 : -1) * Math.PI / 180;   // 1 grado por tick
+    const cos = Math.cos(a), sin = Math.sin(a);
+    out = pts.map(p => {
+      const x = p[0] - cx, y = p[1] - cy;
+      return [cx + x*cos - y*sin, cy + x*sin + y*cos];
+    });
+  } else {
+    const k = d > 0 ? 0.97 : 1.03;
+    out = pts.map(p => [cx + (p[0]-cx)*k, cy + (p[1]-cy)*k]);
+  }
+  l.corners = out.map(p => [p[0]/innerWidth, p[1]/innerHeight]);
+  l.touched = true;
+  applyTransform(l);
+  repositionOverlay(l);
+  save();
+}, { passive: false });
+
+/* teclado */
+window.addEventListener('keydown', e => {
+  if (e.key === 'Tab') { e.preventDefault(); toggleProject(); return; }
+  if (e.target.tagName === 'INPUT') return;   // no pisar sliders/color
+  const l = selected();
+
+  if (e.key === 'f' || e.key === 'F') {
+    document.fullscreenElement ? document.exitFullscreen()
+      : document.documentElement.requestFullscreen();
+  } else if (e.key === ' ') {
+    e.preventDefault();
+    const vids = layers.filter(x => x.media && x.media.tagName === 'VIDEO').map(x => x.media);
+    const anyPlaying = vids.some(v => !v.paused);
+    vids.forEach(v => anyPlaying ? v.pause() : v.play().catch(() => {}));
+  } else if (!editMode) {
+    return;
+  } else if (e.key === 'Delete' && l) {
+    deleteLayer(l);
+  } else if ((e.key === 'r' || e.key === 'R') && l) {
+    resetCorners(l);
+  } else if (e.key === 'Escape') {
+    selectedId = null; activeCorner = null; renderAll();
+  } else if (e.key.startsWith('Arrow') && l) {
+    e.preventDefault();
+    const step = e.shiftKey ? 10 : 1;
+    const dx = (e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0) / innerWidth;
+    const dy = (e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0) / innerHeight;
+    if (activeCorner !== null) {
+      l.corners[activeCorner][0] += dx;
+      l.corners[activeCorner][1] += dy;
+    } else {
+      l.corners = l.corners.map(c => [c[0] + dx, c[1] + dy]);
+    }
+    l.touched = true;
+    applyTransform(l); updateOverlay(); save();
+  }
+});
+
+function toggleProject() {
+  editMode = !editMode;
+  document.body.classList.toggle('projecting', !editMode);
+  $('#btnProject').textContent = editMode ? 'Proyectar ▶' : 'Editar ✎';
+  if (editMode) renderAll();
+}
+
+/* archivos */
+$('#btnProject').onclick = toggleProject;
+$('#btnAddFile').onclick = () => $('#fileInput').click();
+$('#btnAddGrid').onclick = () => addSimpleLayer('grid');
+$('#btnAddColor').onclick = () => addSimpleLayer('color');
+$('#fileInput').onchange = e => {
+  [...e.target.files].forEach(addLayerFromFile);
+  e.target.value = '';
+};
+
+let dragDepth = 0;
+window.addEventListener('dragenter', e => {
+  e.preventDefault();
+  if (++dragDepth === 1) $('#dropHint').style.display = 'flex';
+});
+window.addEventListener('dragleave', e => {
+  e.preventDefault();
+  if (--dragDepth === 0) $('#dropHint').style.display = 'none';
+});
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => {
+  e.preventDefault();
+  dragDepth = 0;
+  $('#dropHint').style.display = 'none';
+  if (!editMode) toggleProject();
+  [...e.dataTransfer.files]
+    .filter(f => f.type.startsWith('video') || f.type.startsWith('image'))
+    .forEach(addLayerFromFile);
+});
+
+window.addEventListener('resize', () => {
+  layers.forEach(applyTransform);
+  updateOverlay();
+});
+
+restore();
+renderAll();
+</script>
+</body>
+</html>
