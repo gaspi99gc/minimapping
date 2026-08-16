@@ -1,5 +1,16 @@
 # MiniMapper
 
+## Mejoras pendientes
+
+- 🎭 **Modo vivo**: blackout instantáneo con `B`, fundido suave al entrar/salir
+  de proyección, velocidad de reproducción por video (0.25×–2×).
+- 🎨 **Look**: brillo/saturación/tono por capa (CSS filters) y modos de fusión
+  entre capas (screen/add/multiply).
+- 🎒 **Portabilidad**: exportar/importar el proyecto a un archivo .json
+  (re-vinculando videos por nombre) y funcionamiento offline (PWA).
+- Más lejanas: bordes difuminados en máscaras (feather), warp de malla para
+  superficies curvas (WebGL), visuales generativos, audio-reactividad.
+
 Video mapping básico en un solo archivo HTML. Capas de video/imagen/grilla/color,
 cada una con 4 esquinas arrastrables (warp con perspectiva real vía `matrix3d`).
 
