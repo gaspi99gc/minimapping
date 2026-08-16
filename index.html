@@ -11,7 +11,7 @@
   /* ---- escenario ---- */
   #stage { position: fixed; background: #000; z-index: 0; overflow: hidden; }
   #gridTest { position: absolute; inset: 0; width: 100%; height: 100%;
-    z-index: 5; display: none; }
+    z-index: 5; display: none; pointer-events: none; }
   #gridTest.on { display: block; }
   body:not(.projecting) #stage { outline: 1px dashed #3a3a44; }
   .layer { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
@@ -33,7 +33,10 @@
   .handle.mask { border-color: #ff9f43; }
   .handle.mask.active { background: #ff9f43; }
   .handle.side { width: 16px; height: 16px; margin: -8px; border-radius: 4px; }
-  .maskwrap { position: absolute; inset: 0; }
+  /* las capas no reciben clicks (todo lo maneja el stage) y las imágenes
+     no disparan el arrastre nativo del navegador */
+  .maskwrap { position: absolute; inset: 0; pointer-events: none; }
+  .layer img { -webkit-user-drag: none; user-select: none; }
 
   /* ---- panel ---- */
   #panel { position: fixed; top: 12px; right: 12px; width: 270px; z-index: 30;
@@ -377,6 +380,7 @@ function buildElement(l, blob) {
     if (blob) {
       inner = document.createElement('img');
       inner.src = URL.createObjectURL(blob);
+      inner.draggable = false;
       inner.onload = () => setAspect(l, inner.naturalWidth / inner.naturalHeight);
     } else {
       inner = missing(l.name);
