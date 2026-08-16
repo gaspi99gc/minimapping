@@ -14,6 +14,8 @@
   .layer { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
   .layer video, .layer img, .layer canvas, .layer .fill {
     width: 100%; height: 100%; object-fit: fill; display: block; }
+  .layer .cal { position: absolute; left: 0; top: 0; display: none; }
+  .layer.calib .cal { display: block; }
   .layer .fill { display: flex; align-items: center; justify-content: center;
     font-size: 40px; color: #888; text-align: center; }
 
@@ -128,6 +130,15 @@
        En la lista: <kbd>👁</kbd> ocultar · <kbd>↑</kbd><kbd>↓</kbd> orden · <kbd>🗑</kbd> borrar (o <kbd>Supr</kbd>).
        Con la capa seleccionada aparecen abajo su opacidad y el sonido <kbd>🔊</kbd>.</p>
 
+    <h3>Calibrar antes de poner el video</h3>
+    <p><b>🎯 Calibrar</b> (o <kbd>C</kbd>): la capa se pinta con un patrón
+       <b style="color:#e0e">magenta</b> brillante que se ve fuerte sobre cualquier
+       superficie, a plena opacidad. Encuadrás esquinas y máscara mirando el objeto,
+       y al apagarlo el video aparece exactamente ahí.</p>
+    <p><b>⟳ Cambiar video/imagen</b>: pone otro contenido en la capa conservando
+       esquinas y máscara. Podés armar una capa de Color, calibrarla sobre el objeto
+       y recién después "pegarle" el video.</p>
+
     <h3>Acomodar sin deformar</h3>
     <p>Arrastrar adentro: <b>mover</b> (frena en los bordes: la capa no se escapa de la pantalla) ·
        Rueda: <b>escalar</b> · <kbd>Shift</kbd>+rueda: <b>rotar</b>.</p>
@@ -162,6 +173,7 @@
 </div>
 
 <input type="file" id="fileInput" hidden multiple accept="video/*,image/*">
+<input type="file" id="fileReplace" hidden accept="video/*,image/*">
 
 <script>
 'use strict';
@@ -267,6 +279,7 @@ function newLayer(type, name) {
     aspect: 16/9,     // proporción real del contenido (se detecta al cargar)
     touched: false,   // true apenas el usuario mueve/deforma la capa
     opacity: 1, visible: true, muted: true, color: '#ffffff',
+    calib: false,     // true = mostrar patron de calibracion en lugar del contenido
     mask: null,       // poligono de recorte en coords de pantalla (normalizado), null = sin mascara
     el: null, wrap: null, media: null
   };
@@ -329,6 +342,10 @@ function buildElement(l, blob) {
   }
   l.media = inner;
   el.appendChild(inner);
+  const cal = document.createElement('canvas');
+  cal.className = 'cal';
+  drawGrid(cal, '#e0e');
+  el.appendChild(cal);
   l.el = el;
   const wrap = document.createElement('div');
   wrap.className = 'maskwrap';
@@ -349,8 +366,9 @@ function missing(name) {
 }
 
 function syncLayerStyle(l) {
-  l.wrap.style.opacity = l.opacity;
+  l.wrap.style.opacity = l.calib ? 1 : l.opacity;   // calibrando, a plena potencia
   l.wrap.style.display = l.visible ? '' : 'none';
+  l.el.classList.toggle('calib', !!l.calib);
 }
 
 function maskPx(l) {
@@ -365,10 +383,10 @@ function applyMask(l) {
     : '';
 }
 
-function drawGrid(cv) {
+function drawGrid(cv, bg) {
   cv.width = BASE_W; cv.height = BASE_H;
   const g = cv.getContext('2d');
-  g.fillStyle = '#000'; g.fillRect(0, 0, BASE_W, BASE_H);
+  g.fillStyle = bg || '#000'; g.fillRect(0, 0, BASE_W, BASE_H);
   g.strokeStyle = '#fff'; g.lineWidth = 1;
   for (let x = 0; x <= BASE_W; x += 60) { g.beginPath(); g.moveTo(x+.5, 0); g.lineTo(x+.5, BASE_H); g.stroke(); }
   for (let y = 0; y <= BASE_H; y += 60) { g.beginPath(); g.moveTo(0, y+.5); g.lineTo(BASE_W, y+.5); g.stroke(); }
@@ -398,6 +416,21 @@ function addSimpleLayer(type) {
   renderAll(); save();
 }
 
+/* poner otro video/imagen en una capa existente conservando esquinas y máscara */
+function replaceContent(l, file) {
+  if (l.media && l.media.src && l.media.src.startsWith('blob:'))
+    URL.revokeObjectURL(l.media.src);
+  l.wrap.remove();
+  l.type = file.type.startsWith('video') ? 'video' : 'image';
+  l.name = file.name;
+  l.touched = true;   // conservar el encuadre calibrado, no reacomodar por aspecto
+  l.calib = false;    // al poner el contenido, mostrarlo
+  buildElement(l, file);
+  putFile(l.id, file).catch(() =>
+    console.warn('No se pudo guardar el archivo para la próxima sesión'));
+  renderAll(); save();
+}
+
 function deleteLayer(l) {
   if (l.media && l.media.src && l.media.src.startsWith('blob:'))
     URL.revokeObjectURL(l.media.src);
@@ -414,7 +447,7 @@ const selected = () => layers.find(l => l.id === selectedId) || null;
 function save() {
   const meta = layers.map(l => ({
     id: l.id, type: l.type, name: l.name, corners: l.corners,
-    aspect: l.aspect, touched: l.touched, mask: l.mask,
+    aspect: l.aspect, touched: l.touched, mask: l.mask, calib: l.calib,
     opacity: l.opacity, visible: l.visible, muted: l.muted, color: l.color
   }));
   try { localStorage.setItem(KEY, JSON.stringify({ layers: meta })); } catch (e) {}
@@ -519,6 +552,15 @@ function renderProps() {
   box.innerHTML = '';
   const l = selected();
   if (!l) return;
+
+  box.appendChild(btn(l.calib ? '🎯 Calibrando… (C apaga)' : '🎯 Calibrar (C)',
+    'mostrar un patrón magenta brillante para encuadrar sobre el objeto', () => {
+    l.calib = !l.calib; syncLayerStyle(l); renderProps(); save();
+  }));
+  box.appendChild(btn('⟳ Cambiar video/imagen…',
+    'poner otro contenido en esta capa conservando esquinas y máscara', () => {
+    replaceTarget = l; $('#fileReplace').click();
+  }));
 
   const lab = document.createElement('label');
   lab.textContent = 'Opacidad';
@@ -874,6 +916,9 @@ window.addEventListener('keydown', e => {
     } else {
       resetCorners(l);
     }
+  } else if ((e.key === 'c' || e.key === 'C') && l) {
+    l.calib = !l.calib;
+    syncLayerStyle(l); renderProps(); save();
   } else if (e.key === 'Escape') {
     if (maskEdit) endMaskEdit();
     else { selectedId = null; activeCorner = null; renderAll(); }
@@ -930,6 +975,13 @@ $('#btnAddColor').onclick = () => addSimpleLayer('color');
 $('#fileInput').onchange = e => {
   [...e.target.files].forEach(addLayerFromFile);
   e.target.value = '';
+};
+let replaceTarget = null;
+$('#fileReplace').onchange = e => {
+  const f = e.target.files[0];
+  if (f && replaceTarget) replaceContent(replaceTarget, f);
+  e.target.value = '';
+  replaceTarget = null;
 };
 
 let dragDepth = 0;

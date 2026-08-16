@@ -27,6 +27,14 @@ cada una con 4 esquinas arrastrables (warp con perspectiva real vía `matrix3d`)
 | `Supr` | borrar capa seleccionada |
 | `Esc` | deseleccionar |
 
+## Calibración por capa
+
+- **🎯 Calibrar** (tecla `C`): la capa seleccionada se pinta con un patrón magenta
+  brillante en su propio cuadro — se encuadra con eso sobre el objeto y al
+  apagarlo el video aparece exactamente ahí.
+- **⟳ Cambiar video/imagen**: reemplaza el contenido de una capa conservando
+  esquinas y máscara (calibrás primero, ponés el video después).
+
 ## Máscaras
 
 Con una capa seleccionada, botón **✂ Máscara** en el panel: aparece un polígono
