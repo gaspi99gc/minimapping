@@ -105,19 +105,33 @@ const stage = $('#stage'), wires = $('#wires'), handlesBox = $('#handles');
 const BASE_W = 960, BASE_H = 540;   // tamaño "fuente" de toda capa antes del warp
 const KEY = 'minimapper-project';
 
-/* Área de proyección: rectángulo con la proporción del monitor (= pantalla completa),
-   escalado para caber en la ventana con barras negras alrededor. Lo que se ve en
-   ventana es exactamente lo que se va a ver en F11, sin corrimientos. */
+/* Área de proyección ANCLADA A LA PANTALLA FÍSICA: siempre representa el monitor
+   entero a escala 1:1, y la ventana es solo un recorte por el que se la ve.
+   Así nada se mueve físicamente al entrar/salir de F11 o al mover la ventana:
+   lo que cae sobre el objeto queda clavado ahí. En F11 el recorte = pantalla. */
 let SR = { x: 0, y: 0, w: innerWidth, h: innerHeight };
 function layoutStage() {
-  const k = Math.min(innerWidth / screen.width, innerHeight / screen.height);
-  const w = screen.width * k, h = screen.height * k;
-  SR = { x: (innerWidth - w) / 2, y: (innerHeight - h) / 2, w, h };
+  // posición del viewport dentro del monitor actual (aprox. por bordes de ventana)
+  const bw = (outerWidth - innerWidth) / 2;                  // borde lateral de Chrome
+  const vx = screenX - (screen.availLeft || 0) + bw;
+  const vy = screenY - (screen.availTop || 0) + (outerHeight - innerHeight) - bw;
+  SR = { x: -vx, y: -vy, w: screen.width, h: screen.height };
   stage.style.left = SR.x + 'px';
   stage.style.top = SR.y + 'px';
   stage.style.width = SR.w + 'px';
   stage.style.height = SR.h + 'px';
 }
+/* la ventana puede moverse sin disparar resize: vigilar la posición */
+let stageSig = '';
+setInterval(() => {
+  const sig = [screenX, screenY, outerWidth, outerHeight, innerWidth, innerHeight].join(',');
+  if (sig !== stageSig) {
+    stageSig = sig;
+    layoutStage();
+    layers.forEach(applyTransform);
+    updateOverlay();
+  }
+}, 300);
 const toScreen = c => [SR.x + c[0]*SR.w, SR.y + c[1]*SR.h]; // normalizado -> px de ventana
 const toLocal = c => [c[0]*SR.w, c[1]*SR.h];                // normalizado -> px dentro del área
 const fromScreen = (x, y) => [(x - SR.x)/SR.w, (y - SR.y)/SR.h];

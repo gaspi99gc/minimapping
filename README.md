@@ -41,9 +41,10 @@ naranja que recorta la capa (para que el video no se "derrame" fuera del objeto)
 
 ## Notas
 
-- En ventana se ve el **área de proyección** (rectángulo con borde punteado,
-  con la proporción exacta de la pantalla) escalada con barras negras: lo que
-  ves ahí es exactamente lo que sale en F11, nada se corre al cambiar.
+- El área de proyección está **anclada a la pantalla física** a escala 1:1: la
+  ventana es solo un recorte por el que se la ve. Nada se mueve al entrar/salir
+  de F11 ni al mover la ventana — lo que cae sobre el objeto queda clavado ahí.
+  Requiere zoom del navegador en 100% (Ctrl+0).
 
 - Cada video entra con su proporción real, y mover / escalar (rueda) / rotar
   (Shift+rueda) nunca lo deforman. Arrastrar una esquina sí lo deforma: eso es
