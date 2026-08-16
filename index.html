@@ -10,6 +10,9 @@
 
   /* ---- escenario ---- */
   #stage { position: fixed; background: #000; z-index: 0; overflow: hidden; }
+  #gridTest { position: absolute; inset: 0; width: 100%; height: 100%;
+    z-index: 5; display: none; }
+  #gridTest.on { display: block; }
   body:not(.projecting) #stage { outline: 1px dashed #3a3a44; }
   .layer { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
   .layer video, .layer img, .layer canvas, .layer .fill {
@@ -98,7 +101,7 @@
 </head>
 <body>
 
-<div id="stage"></div>
+<div id="stage"><canvas id="gridTest"></canvas></div>
 <svg id="wires"></svg>
 <div id="handles"></div>
 
@@ -106,14 +109,17 @@
   <header>MiniMapper <span><button id="btnHelp" title="Ayuda (H)">?</button> <button id="btnProject" title="Tab">Proyectar ▶</button></span></header>
   <div class="row">
     <button id="btnAddFile">+ Video/Imagen</button>
-    <button id="btnAddGrid">+ Grilla</button>
+    <button id="btnAddFrame">+ Cuadro</button>
     <button id="btnAddColor">+ Color</button>
+  </div>
+  <div class="row">
+    <button id="btnTest">▦ Test proyector (G)</button>
   </div>
   <div id="layerList"></div>
   <div id="props"></div>
 </div>
 
-<div id="help">H ayuda · Tab proyectar · F fullscreen · Rueda escala · Shift+rueda rota · Flechas ajuste fino (Shift ×10) · Supr borrar capa · Espacio play/pausa · R reset esquinas</div>
+<div id="help">H ayuda · Tab proyectar · F fullscreen · G test · C calibrar · Rueda escala · Shift+rueda rota · Flechas ajuste fino (Shift ×10) · Supr borrar capa · Espacio play/pausa · R reset esquinas</div>
 <div id="empty">Arrastrá un video acá<br><small>o usá los botones del panel →</small></div>
 <div id="dropHint">Soltá el archivo</div>
 <div id="tuto">
@@ -124,7 +130,7 @@
 
     <h3>Capas</h3>
     <p>Arrastrá un <b>video o imagen</b> a la ventana (o botón <b>+ Video/Imagen</b>).
-       <b>+ Grilla</b>: patrón de calibración para alinear antes de poner contenido.
+       <b>+ Cuadro</b>: capa vacía que nace calibrando, el molde donde después pegás el video.
        <b>+ Color</b>: plano de color, ideal combinado con una máscara para pintar formas.</p>
     <p>Click sobre una capa (en pantalla o en la lista) la selecciona.
        En la lista: <kbd>👁</kbd> ocultar · <kbd>↑</kbd><kbd>↓</kbd> orden · <kbd>🗑</kbd> borrar (o <kbd>Supr</kbd>).
@@ -135,9 +141,11 @@
        <b style="color:#e0e">magenta</b> brillante que se ve fuerte sobre cualquier
        superficie, a plena opacidad. Encuadrás esquinas y máscara mirando el objeto,
        y al apagarlo el video aparece exactamente ahí.</p>
-    <p><b>⟳ Cambiar video/imagen</b>: pone otro contenido en la capa conservando
-       esquinas y máscara. Podés armar una capa de Color, calibrarla sobre el objeto
-       y recién después "pegarle" el video.</p>
+    <p>Flujo recomendado: <b>+ Cuadro</b> crea el molde magenta → lo encuadrás sobre
+       el objeto → <b>soltás el video encima del cuadro</b> y entra ahí, conservando
+       esquinas y máscara (soltarlo fuera crea una capa nueva, como siempre).
+       También está <b>⟳ Cambiar video/imagen</b> para reemplazar el contenido
+       de cualquier capa sin perder el encuadre.</p>
 
     <h3>Acomodar sin deformar</h3>
     <p>Arrastrar adentro: <b>mover</b> (frena en los bordes: la capa no se escapa de la pantalla) ·
@@ -163,6 +171,9 @@
     <h3>Proyectar</h3>
     <p><kbd>Tab</kbd>: modo proyección (oculta paneles y cursor) y vuelta a edición.
        <kbd>F</kbd>: pantalla completa · <kbd>Espacio</kbd>: play/pausa de todos los videos.</p>
+    <p><kbd>G</kbd>: <b>test del proyector</b> — grilla nítida a pantalla completa, por
+       encima de todo, para enfocar la lente y ver hasta dónde llega la proyección.
+       Otro <kbd>G</kbd> la saca. Funciona también en modo proyección.</p>
     <p>La proyección está <b>anclada a la pantalla física</b>: no se corre entre ventana y F11.
        Mantené el zoom de Chrome en 100% (<kbd>Ctrl</kbd>+<kbd>0</kbd>).</p>
 
@@ -198,6 +209,34 @@ function layoutStage() {
   stage.style.top = SR.y + 'px';
   stage.style.width = SR.w + 'px';
   stage.style.height = SR.h + 'px';
+  if (testOn) drawTest();
+}
+
+/* grilla de test a pantalla completa, nítida, para enfocar y encuadrar el proyector */
+function drawTest() {
+  const cv = $('#gridTest');
+  const dpr = devicePixelRatio || 1;
+  cv.width = Math.round(SR.w * dpr);
+  cv.height = Math.round(SR.h * dpr);
+  const g = cv.getContext('2d');
+  g.scale(dpr, dpr);
+  const W = SR.w, H = SR.h;
+  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+  g.strokeStyle = '#fff'; g.lineWidth = 1;
+  for (let x = 0; x <= W; x += 60) { g.beginPath(); g.moveTo(x+.5, 0); g.lineTo(x+.5, H); g.stroke(); }
+  for (let y = 0; y <= H; y += 60) { g.beginPath(); g.moveTo(0, y+.5); g.lineTo(W, y+.5); g.stroke(); }
+  g.lineWidth = 2;
+  g.beginPath(); g.moveTo(0, 0); g.lineTo(W, H); g.stroke();
+  g.beginPath(); g.moveTo(W, 0); g.lineTo(0, H); g.stroke();
+  g.beginPath(); g.arc(W/2, H/2, Math.min(W, H)/4, 0, Math.PI*2); g.stroke();
+  g.lineWidth = 6; g.strokeRect(3, 3, W-6, H-6);
+}
+
+function toggleTest() {
+  testOn = !testOn;
+  if (testOn) drawTest();
+  $('#gridTest').classList.toggle('on', testOn);
+  $('#btnTest').textContent = testOn ? '▦ Test proyector: sacar (G)' : '▦ Test proyector (G)';
 }
 /* la ventana puede moverse sin disparar resize: vigilar la posición */
 let stageSig = '';
@@ -220,6 +259,7 @@ let activeCorner = null; // índice de esquina activa (para flechas)
 let editMode = true;
 let drag = null;
 let maskEdit = false;   // true mientras se edita la mascara de la capa seleccionada
+let testOn = false;     // grilla de test del proyector (pantalla completa)
 
 /* ================= homografía: 4 esquinas -> matrix3d =================
    Método clásico: base que mapea el cuadrado unitario a cada cuadrilátero,
@@ -897,6 +937,8 @@ window.addEventListener('keydown', e => {
     const vids = layers.filter(x => x.media && x.media.tagName === 'VIDEO').map(x => x.media);
     const anyPlaying = vids.some(v => !v.paused);
     vids.forEach(v => anyPlaying ? v.pause() : v.play().catch(() => {}));
+  } else if (e.key === 'g' || e.key === 'G') {
+    toggleTest();
   } else if (!editMode) {
     return;
   } else if (e.key === 'Delete' && l) {
@@ -970,8 +1012,17 @@ $('#tuto').addEventListener('pointerdown', e => {
 /* archivos */
 $('#btnProject').onclick = toggleProject;
 $('#btnAddFile').onclick = () => $('#fileInput').click();
-$('#btnAddGrid').onclick = () => addSimpleLayer('grid');
 $('#btnAddColor').onclick = () => addSimpleLayer('color');
+$('#btnTest').onclick = toggleTest;
+$('#btnAddFrame').onclick = () => {
+  // capa vacía que nace calibrando: el molde donde después se pega el video
+  const l = newLayer('color', 'Cuadro');
+  l.calib = true;
+  buildElement(l, null);
+  layers.push(l);
+  selectedId = l.id; activeCorner = null;
+  renderAll(); save();
+};
 $('#fileInput').onchange = e => {
   [...e.target.files].forEach(addLayerFromFile);
   e.target.value = '';
@@ -999,9 +1050,18 @@ window.addEventListener('drop', e => {
   dragDepth = 0;
   $('#dropHint').style.display = 'none';
   if (!editMode) toggleProject();
-  [...e.dataTransfer.files]
-    .filter(f => f.type.startsWith('video') || f.type.startsWith('image'))
-    .forEach(addLayerFromFile);
+  const files = [...e.dataTransfer.files]
+    .filter(f => f.type.startsWith('video') || f.type.startsWith('image'));
+  if (!files.length) return;
+  // si el drop cae dentro de una capa en calibración, el archivo entra ahí
+  const target = layers.slice().reverse().find(l =>
+    l.visible && l.calib && pointInPoly(e.clientX, e.clientY, cornersPx(l)));
+  if (target) {
+    replaceContent(target, files[0]);
+    files.slice(1).forEach(addLayerFromFile);
+  } else {
+    files.forEach(addLayerFromFile);
+  }
 });
 
 window.addEventListener('resize', () => {

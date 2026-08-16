@@ -29,6 +29,12 @@ cada una con 4 esquinas arrastrables (warp con perspectiva real vía `matrix3d`)
 
 ## Calibración por capa
 
+- **+ Cuadro**: capa vacía que nace en modo calibración (magenta) — el molde.
+  Se encuadra sobre el objeto y se le suelta el video encima: entra ahí,
+  conservando esquinas y máscara. Soltar fuera de un cuadro crea capa nueva.
+- **Test proyector** (tecla `G`): grilla nítida de pantalla completa por encima
+  de todo, para enfocar la lente y encuadrar el proyector físico.
+
 - **🎯 Calibrar** (tecla `C`): la capa seleccionada se pinta con un patrón magenta
   brillante en su propio cuadro — se encuadra con eso sobre el objeto y al
   apagarlo el video aparece exactamente ahí.
