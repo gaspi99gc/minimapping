@@ -27,6 +27,7 @@
   .handle.active { background: #4ecbff; }
   .handle.mask { border-color: #ff9f43; }
   .handle.mask.active { background: #ff9f43; }
+  .handle.side { width: 16px; height: 16px; margin: -8px; border-radius: 4px; }
   .maskwrap { position: absolute; inset: 0; }
 
   /* ---- panel ---- */
@@ -128,13 +129,16 @@
        Con la capa seleccionada aparecen abajo su opacidad y el sonido <kbd>🔊</kbd>.</p>
 
     <h3>Acomodar sin deformar</h3>
-    <p>Arrastrar adentro: <b>mover</b> · Rueda: <b>escalar</b> · <kbd>Shift</kbd>+rueda: <b>rotar</b>.</p>
+    <p>Arrastrar adentro: <b>mover</b> (frena en los bordes: la capa no se escapa de la pantalla) ·
+       Rueda: <b>escalar</b> · <kbd>Shift</kbd>+rueda: <b>rotar</b>.</p>
     <p>Flechas: ajuste fino de a 1px (<kbd>Shift</kbd> = de a 10). Mueven la esquina que tocaste último, o toda la capa.</p>
     <p><kbd>R</kbd>: vuelve a la proporción original del video, centrado.</p>
 
     <h3>Esquinas (perspectiva)</h3>
-    <p>Los puntos <b style="color:#4ecbff">celestes</b> deforman la capa para calzarla
+    <p>Los puntos <b style="color:#4ecbff">celestes</b> redondos deforman la capa para calzarla
        en el objeto cuando el proyector está en ángulo. Esto sí deforma el contenido: es a propósito.</p>
+    <p>Los <b>cuadrados en el medio de cada lado</b> mueven ese lado entero,
+       como agarrar las dos esquinas a la vez.</p>
 
     <h3>Máscaras (recortar siluetas)</h3>
     <p>Botón <b class="naranja">✂ Máscara</b>: aparece un polígono <b class="naranja">naranja</b> que recorta la capa,
@@ -631,18 +635,49 @@ function updateOverlay() {
   }
   const l = selected();
   if (!l || !l.visible) return;
-  if (maskEdit && l.mask) maskPx(l).forEach((p, idx) => makeHandle(l, idx, true, p));
-  else cornersPx(l).forEach((p, idx) => makeHandle(l, idx, false, p));
+  if (maskEdit && l.mask) {
+    maskPx(l).forEach((p, idx) => makeHandle(l, idx, true, p));
+  } else {
+    const c = cornersPx(l);
+    c.forEach((p, idx) => makeHandle(l, idx, false, p));
+    c.forEach((p, idx) => {
+      const q = c[(idx + 1) % 4];
+      makeSideHandle(l, idx, [(p[0]+q[0])/2, (p[1]+q[1])/2]);
+    });
+  }
+}
+
+/* handle cuadrado en el medio de cada lado: mueve las dos esquinas juntas */
+function makeSideHandle(l, idx, p) {
+  const h = document.createElement('div');
+  h.className = 'handle side';
+  h.title = 'mover todo el lado';
+  h.style.left = p[0] + 'px';
+  h.style.top = p[1] + 'px';
+  h.addEventListener('pointerdown', e => {
+    e.stopPropagation(); e.preventDefault();
+    activeCorner = null;
+    drag = { mode: 'side', layer: l, idx, x0: e.clientX, y0: e.clientY,
+             start: [[...l.corners[idx]], [...l.corners[(idx+1)%4]]] };
+    h.setPointerCapture(e.pointerId);
+    handlesBox.querySelectorAll('.handle.active').forEach(x => x.classList.remove('active'));
+  });
+  handlesBox.appendChild(h);
 }
 
 /* mover el polígono en edición + handles sin reconstruir el DOM */
 function repositionOverlay(l) {
-  const pts = (maskEdit && l.mask) ? maskPx(l) : cornersPx(l);
+  const onMask = maskEdit && l.mask;
+  const pts = onMask ? maskPx(l) : cornersPx(l);
   if (selPoly) selPoly.setAttribute('points', pts.map(p => p.join(',')).join(' '));
+  const all = onMask ? pts : pts.concat(pts.map((p, i) => {
+    const q = pts[(i + 1) % 4];
+    return [(p[0]+q[0])/2, (p[1]+q[1])/2];
+  }));
   [...handlesBox.children].forEach((h, idx) => {
-    if (!pts[idx]) return;
-    h.style.left = pts[idx][0] + 'px';
-    h.style.top = pts[idx][1] + 'px';
+    if (!all[idx]) return;
+    h.style.left = all[idx][0] + 'px';
+    h.style.top = all[idx][1] + 'px';
   });
 }
 
@@ -655,6 +690,19 @@ function pointInPoly(px, py, c) {
   }
   return inside;
 }
+/* al mover una capa/máscara entera, el bounding box no puede salirse del área;
+   si es más grande que el área, al revés: siempre tiene que cubrirla */
+function clampMove(start, dx, dy) {
+  const xs = start.map(c => c[0]), ys = start.map(c => c[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  dx = (maxX - minX <= 1) ? Math.max(-minX, Math.min(1 - maxX, dx))
+                          : Math.max(1 - maxX, Math.min(-minX, dx));
+  dy = (maxY - minY <= 1) ? Math.max(-minY, Math.min(1 - maxY, dy))
+                          : Math.max(1 - maxY, Math.min(-minY, dy));
+  return [dx, dy];
+}
+
 function topLayerAt(x, y) {
   for (let i = layers.length - 1; i >= 0; i--)
     if (layers[i].visible && pointInPoly(x, y, cornersPx(layers[i]))) return layers[i];
@@ -692,14 +740,20 @@ window.addEventListener('pointermove', e => {
     drag.layer.mask[drag.idx] = [drag.start[0] + dx, drag.start[1] + dy];
     applyMask(drag.layer);
   } else if (drag.mode === 'maskmove') {
-    drag.layer.mask = drag.start.map(c => [c[0] + dx, c[1] + dy]);
+    const [mdx, mdy] = clampMove(drag.start, dx, dy);
+    drag.layer.mask = drag.start.map(c => [c[0] + mdx, c[1] + mdy]);
     applyMask(drag.layer);
   } else {
     drag.layer.touched = true;
     if (drag.mode === 'corner') {
       drag.layer.corners[drag.idx] = [drag.start[0] + dx, drag.start[1] + dy];
+    } else if (drag.mode === 'side') {
+      const j = (drag.idx + 1) % 4;
+      drag.layer.corners[drag.idx] = [drag.start[0][0] + dx, drag.start[0][1] + dy];
+      drag.layer.corners[j] = [drag.start[1][0] + dx, drag.start[1][1] + dy];
     } else {
-      drag.layer.corners = drag.start.map(c => [c[0] + dx, c[1] + dy]);
+      const [mdx, mdy] = clampMove(drag.start, dx, dy);
+      drag.layer.corners = drag.start.map(c => [c[0] + mdx, c[1] + mdy]);
     }
     applyTransform(drag.layer);
   }
@@ -819,7 +873,8 @@ window.addEventListener('keydown', e => {
         l.mask[activeCorner][0] += dx;
         l.mask[activeCorner][1] += dy;
       } else {
-        l.mask = l.mask.map(c => [c[0] + dx, c[1] + dy]);
+        const [mdx, mdy] = clampMove(l.mask, dx, dy);
+        l.mask = l.mask.map(c => [c[0] + mdx, c[1] + mdy]);
       }
       applyMask(l);
     } else {
@@ -827,7 +882,8 @@ window.addEventListener('keydown', e => {
         l.corners[activeCorner][0] += dx;
         l.corners[activeCorner][1] += dy;
       } else {
-        l.corners = l.corners.map(c => [c[0] + dx, c[1] + dy]);
+        const [mdx, mdy] = clampMove(l.corners, dx, dy);
+        l.corners = l.corners.map(c => [c[0] + mdx, c[1] + mdy]);
       }
       l.touched = true;
       applyTransform(l);

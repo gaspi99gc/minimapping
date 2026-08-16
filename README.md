@@ -42,6 +42,10 @@ naranja que recorta la capa (para que el video no se "derrame" fuera del objeto)
 
 ## Notas
 
+- Al mover una capa o máscara entera, frena en los bordes del área (no se puede
+  "perder" fuera de la pantalla). Los handles cuadrados del medio de cada lado
+  mueven ese lado completo.
+
 - El área de proyección está **anclada a la pantalla física** a escala 1:1: la
   ventana es solo un recorte por el que se la ve. Nada se mueve al entrar/salir
   de F11 ni al mover la ventana — lo que cae sobre el objeto queda clavado ahí.
