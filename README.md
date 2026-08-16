@@ -41,6 +41,10 @@ naranja que recorta la capa (para que el video no se "derrame" fuera del objeto)
 
 ## Notas
 
+- En ventana se ve el **área de proyección** (rectángulo con borde punteado,
+  con la proporción exacta de la pantalla) escalada con barras negras: lo que
+  ves ahí es exactamente lo que sale en F11, nada se corre al cambiar.
+
 - Cada video entra con su proporción real, y mover / escalar (rueda) / rotar
   (Shift+rueda) nunca lo deforman. Arrastrar una esquina sí lo deforma: eso es
   a propósito, sirve para compensar el ángulo del proyector contra el objeto.

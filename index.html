@@ -9,7 +9,8 @@
     font-family: system-ui, sans-serif; color: #ddd; user-select: none; }
 
   /* ---- escenario ---- */
-  #stage { position: fixed; inset: 0; background: #000; z-index: 0; }
+  #stage { position: fixed; background: #000; z-index: 0; overflow: hidden; }
+  body:not(.projecting) #stage { outline: 1px dashed #3a3a44; }
   .layer { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
   .layer video, .layer img, .layer canvas, .layer .fill {
     width: 100%; height: 100%; object-fit: fill; display: block; }
@@ -104,6 +105,23 @@ const stage = $('#stage'), wires = $('#wires'), handlesBox = $('#handles');
 const BASE_W = 960, BASE_H = 540;   // tamaño "fuente" de toda capa antes del warp
 const KEY = 'minimapper-project';
 
+/* Área de proyección: rectángulo con la proporción del monitor (= pantalla completa),
+   escalado para caber en la ventana con barras negras alrededor. Lo que se ve en
+   ventana es exactamente lo que se va a ver en F11, sin corrimientos. */
+let SR = { x: 0, y: 0, w: innerWidth, h: innerHeight };
+function layoutStage() {
+  const k = Math.min(innerWidth / screen.width, innerHeight / screen.height);
+  const w = screen.width * k, h = screen.height * k;
+  SR = { x: (innerWidth - w) / 2, y: (innerHeight - h) / 2, w, h };
+  stage.style.left = SR.x + 'px';
+  stage.style.top = SR.y + 'px';
+  stage.style.width = SR.w + 'px';
+  stage.style.height = SR.h + 'px';
+}
+const toScreen = c => [SR.x + c[0]*SR.w, SR.y + c[1]*SR.h]; // normalizado -> px de ventana
+const toLocal = c => [c[0]*SR.w, c[1]*SR.h];                // normalizado -> px dentro del área
+const fromScreen = (x, y) => [(x - SR.x)/SR.w, (y - SR.y)/SR.h];
+
 let layers = [];        // [{id,type,name,corners,opacity,visible,muted,color,el,media}]
 let selectedId = null;
 let activeCorner = null; // índice de esquina activa (para flechas)
@@ -153,10 +171,10 @@ function matrix3dFor(c) {
 /* ================= capas ================= */
 // rectángulo centrado con la proporción pedida, al 50% del ancho de pantalla
 function defaultCorners(aspect) {
-  let wpx = innerWidth * 0.5;
+  let wpx = SR.w * 0.5;
   let hpx = wpx / aspect;
-  if (hpx > innerHeight * 0.8) { hpx = innerHeight * 0.8; wpx = hpx * aspect; }
-  const w = wpx / innerWidth, h = hpx / innerHeight;
+  if (hpx > SR.h * 0.8) { hpx = SR.h * 0.8; wpx = hpx * aspect; }
+  const w = wpx / SR.w, h = hpx / SR.h;
   const x = (1-w)/2, y = (1-h)/2;
   return [[x,y],[x+w,y],[x+w,y+h],[x,y+h]];   // TL,TR,BR,BL normalizado 0-1
 }
@@ -187,11 +205,11 @@ function setAspect(l, a) {
 }
 
 function cornersPx(l) {
-  return l.corners.map(c => [c[0]*innerWidth, c[1]*innerHeight]);
+  return l.corners.map(toScreen);
 }
 
 function applyTransform(l) {
-  l.el.style.transform = matrix3dFor(cornersPx(l));
+  l.el.style.transform = matrix3dFor(l.corners.map(toLocal));
 }
 
 function buildElement(l, blob) {
@@ -256,7 +274,7 @@ function syncLayerStyle(l) {
 }
 
 function maskPx(l) {
-  return l.mask.map(c => [c[0]*innerWidth, c[1]*innerHeight]);
+  return l.mask.map(toScreen);
 }
 
 // la mascara recorta en coordenadas de pantalla: queda fija a la escena
@@ -593,8 +611,8 @@ stage.addEventListener('pointerdown', e => {
 
 window.addEventListener('pointermove', e => {
   if (!drag) return;
-  const dx = (e.clientX - drag.x0) / innerWidth;
-  const dy = (e.clientY - drag.y0) / innerHeight;
+  const dx = (e.clientX - drag.x0) / SR.w;
+  const dy = (e.clientY - drag.y0) / SR.h;
   if (drag.mode === 'maskpt') {
     drag.layer.mask[drag.idx] = [drag.start[0] + dx, drag.start[1] + dy];
     applyMask(drag.layer);
@@ -634,7 +652,7 @@ window.addEventListener('dblclick', e => {
     const d = distToSegment(e.clientX, e.clientY, pts[i], pts[(i+1) % pts.length]);
     if (d < bestD) { bestD = d; best = i; }
   }
-  l.mask.splice(best + 1, 0, [e.clientX/innerWidth, e.clientY/innerHeight]);
+  l.mask.splice(best + 1, 0, fromScreen(e.clientX, e.clientY));
   activeCorner = best + 1;
   applyMask(l); updateOverlay(); save();
 });
@@ -663,7 +681,7 @@ window.addEventListener('wheel', e => {
     const k = d > 0 ? 0.97 : 1.03;
     out = pts.map(p => [cx + (p[0]-cx)*k, cy + (p[1]-cy)*k]);
   }
-  const norm = out.map(p => [p[0]/innerWidth, p[1]/innerHeight]);
+  const norm = out.map(p => fromScreen(p[0], p[1]));
   if (onMask) {
     l.mask = norm;
     applyMask(l);
@@ -715,8 +733,8 @@ window.addEventListener('keydown', e => {
   } else if (e.key.startsWith('Arrow') && l) {
     e.preventDefault();
     const step = e.shiftKey ? 10 : 1;
-    const dx = (e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0) / innerWidth;
-    const dy = (e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0) / innerHeight;
+    const dx = (e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0) / SR.w;
+    const dy = (e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0) / SR.h;
     if (maskEdit && l.mask) {
       if (activeCorner !== null) {
         l.mask[activeCorner][0] += dx;
@@ -778,10 +796,12 @@ window.addEventListener('drop', e => {
 });
 
 window.addEventListener('resize', () => {
+  layoutStage();
   layers.forEach(applyTransform);
   updateOverlay();
 });
 
+layoutStage();
 restore();
 renderAll();
 </script>
