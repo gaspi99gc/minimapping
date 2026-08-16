@@ -26,6 +26,19 @@ cada una con 4 esquinas arrastrables (warp con perspectiva real vía `matrix3d`)
 | `Supr` | borrar capa seleccionada |
 | `Esc` | deseleccionar |
 
+## Máscaras
+
+Con una capa seleccionada, botón **✂ Máscara** en el panel: aparece un polígono
+naranja que recorta la capa (para que el video no se "derrame" fuera del objeto).
+
+- Arrastrá los puntos naranjas para seguir la silueta del objeto.
+- **Doble click** en un borde agrega un punto; **click derecho** sobre un punto
+  lo borra. Arrastrando adentro se mueve toda la máscara; rueda escala,
+  Shift+rueda rota, flechas ajuste fino.
+- La máscara queda **fija a la escena**: si después movés el video por debajo,
+  el recorte no se mueve (que es lo que querés una vez calzado el objeto).
+- **✔ Máscara lista** (o Esc) sale del modo; **Quitar** la elimina.
+
 ## Notas
 
 - Cada video entra con su proporción real, y mover / escalar (rueda) / rotar

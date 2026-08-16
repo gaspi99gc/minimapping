@@ -24,6 +24,9 @@
     border-radius: 50%; border: 2px solid #4ecbff; background: rgba(0,0,0,.55);
     cursor: grab; pointer-events: auto; }
   .handle.active { background: #4ecbff; }
+  .handle.mask { border-color: #ff9f43; }
+  .handle.mask.active { background: #ff9f43; }
+  .maskwrap { position: absolute; inset: 0; }
 
   /* ---- panel ---- */
   #panel { position: fixed; top: 12px; right: 12px; width: 270px; z-index: 30;
@@ -106,6 +109,7 @@ let selectedId = null;
 let activeCorner = null; // índice de esquina activa (para flechas)
 let editMode = true;
 let drag = null;
+let maskEdit = false;   // true mientras se edita la mascara de la capa seleccionada
 
 /* ================= homografía: 4 esquinas -> matrix3d =================
    Método clásico: base que mapea el cuadrado unitario a cada cuadrilátero,
@@ -165,7 +169,8 @@ function newLayer(type, name) {
     aspect: 16/9,     // proporción real del contenido (se detecta al cargar)
     touched: false,   // true apenas el usuario mueve/deforma la capa
     opacity: 1, visible: true, muted: true, color: '#ffffff',
-    el: null, media: null
+    mask: null,       // poligono de recorte en coords de pantalla (normalizado), null = sin mascara
+    el: null, wrap: null, media: null
   };
 }
 
@@ -227,8 +232,13 @@ function buildElement(l, blob) {
   l.media = inner;
   el.appendChild(inner);
   l.el = el;
+  const wrap = document.createElement('div');
+  wrap.className = 'maskwrap';
+  wrap.appendChild(el);
+  l.wrap = wrap;
   syncLayerStyle(l);
   applyTransform(l);
+  applyMask(l);
 }
 
 function missing(name) {
@@ -241,8 +251,20 @@ function missing(name) {
 }
 
 function syncLayerStyle(l) {
-  l.el.style.opacity = l.opacity;
-  l.el.style.display = l.visible ? '' : 'none';
+  l.wrap.style.opacity = l.opacity;
+  l.wrap.style.display = l.visible ? '' : 'none';
+}
+
+function maskPx(l) {
+  return l.mask.map(c => [c[0]*innerWidth, c[1]*innerHeight]);
+}
+
+// la mascara recorta en coordenadas de pantalla: queda fija a la escena
+// aunque despues se mueva/deforme el contenido de la capa por debajo
+function applyMask(l) {
+  l.wrap.style.clipPath = (l.mask && l.mask.length >= 3)
+    ? 'polygon(' + l.mask.map(p => (p[0]*100).toFixed(3) + '% ' + (p[1]*100).toFixed(3) + '%').join(',') + ')'
+    : '';
 }
 
 function drawGrid(cv) {
@@ -281,10 +303,10 @@ function addSimpleLayer(type) {
 function deleteLayer(l) {
   if (l.media && l.media.src && l.media.src.startsWith('blob:'))
     URL.revokeObjectURL(l.media.src);
-  l.el.remove();
+  l.wrap.remove();
   delFile(l.id);
   layers = layers.filter(x => x.id !== l.id);
-  if (selectedId === l.id) { selectedId = null; activeCorner = null; }
+  if (selectedId === l.id) { selectedId = null; activeCorner = null; maskEdit = false; }
   renderAll(); save();
 }
 
@@ -294,7 +316,7 @@ const selected = () => layers.find(l => l.id === selectedId) || null;
 function save() {
   const meta = layers.map(l => ({
     id: l.id, type: l.type, name: l.name, corners: l.corners,
-    aspect: l.aspect, touched: l.touched,
+    aspect: l.aspect, touched: l.touched, mask: l.mask,
     opacity: l.opacity, visible: l.visible, muted: l.muted, color: l.color
   }));
   try { localStorage.setItem(KEY, JSON.stringify({ layers: meta })); } catch (e) {}
@@ -348,7 +370,7 @@ async function restore() {
 /* ================= render UI ================= */
 function renderAll() {
   // z-order: layers[0] abajo
-  for (const l of layers) stage.appendChild(l.el);
+  for (const l of layers) stage.appendChild(l.wrap);
   $('#empty').style.display = layers.length ? 'none' : '';
   renderList();
   renderProps();
@@ -363,7 +385,10 @@ function renderList() {
     const i = layers.indexOf(l);
     const item = document.createElement('div');
     item.className = 'item' + (l.id === selectedId ? ' sel' : '');
-    item.onclick = () => { selectedId = l.id; activeCorner = null; renderAll(); };
+    item.onclick = () => {
+      if (selectedId !== l.id) maskEdit = false;
+      selectedId = l.id; activeCorner = null; renderAll();
+    };
 
     const eye = btn(l.visible ? '👁' : '—', 'mostrar/ocultar', e => {
       e.stopPropagation(); l.visible = !l.visible; syncLayerStyle(l); renderAll(); save();
@@ -421,6 +446,33 @@ function renderProps() {
     box.appendChild(c);
   }
   box.appendChild(btn('Reset esquinas (R)', 'volver al rectángulo inicial', () => resetCorners(l)));
+
+  const mrow = document.createElement('div');
+  mrow.className = 'row';
+  mrow.style.margin = '0';
+  mrow.appendChild(btn(maskEdit ? '✔ Máscara lista' : '✂ Máscara', 'recortar la capa con un polígono', () => {
+    maskEdit ? endMaskEdit() : startMaskEdit(l);
+  }));
+  if (l.mask) mrow.appendChild(btn('Quitar', 'sacar la máscara', () => {
+    l.mask = null; maskEdit = false; applyMask(l); renderAll(); save();
+  }));
+  box.appendChild(mrow);
+  if (maskEdit) {
+    const tip = document.createElement('div');
+    tip.style.cssText = 'font-size:11px;color:#999;line-height:1.5';
+    tip.textContent = 'Doble click en un borde: agregar punto. Click derecho en un punto: borrarlo. Arrastrar adentro: mover toda la máscara.';
+    box.appendChild(tip);
+  }
+}
+
+function startMaskEdit(l) {
+  if (!l.mask || l.mask.length < 3) l.mask = l.corners.map(c => [...c]);
+  maskEdit = true; activeCorner = null;
+  applyMask(l); renderAll(); save();
+}
+function endMaskEdit() {
+  maskEdit = false; activeCorner = null;
+  renderAll();
 }
 
 function resetCorners(l) {
@@ -430,7 +482,43 @@ function resetCorners(l) {
 }
 
 /* contornos + handles */
-let selPoly = null;   // polígono de la capa seleccionada, para moverlo sin reconstruir
+let selPoly = null;   // polígono que se está editando, para moverlo sin reconstruir
+function svgPoly(pts, stroke, width) {
+  const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+  poly.setAttribute('points', pts.map(p => p.join(',')).join(' '));
+  poly.setAttribute('fill', 'none');
+  poly.setAttribute('stroke', stroke);
+  poly.setAttribute('stroke-width', width);
+  wires.appendChild(poly);
+  return poly;
+}
+
+function makeHandle(l, idx, isMask, p) {
+  const h = document.createElement('div');
+  h.className = 'handle' + (isMask ? ' mask' : '') + (idx === activeCorner ? ' active' : '');
+  h.style.left = p[0] + 'px';
+  h.style.top = p[1] + 'px';
+  h.addEventListener('pointerdown', e => {
+    e.stopPropagation(); e.preventDefault();
+    activeCorner = idx;
+    drag = { mode: isMask ? 'maskpt' : 'corner', layer: l, idx,
+             x0: e.clientX, y0: e.clientY,
+             start: [...(isMask ? l.mask : l.corners)[idx]] };
+    h.setPointerCapture(e.pointerId);
+    handlesBox.querySelectorAll('.handle.active').forEach(x => x.classList.remove('active'));
+    h.classList.add('active');
+  });
+  if (isMask) h.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    if (l.mask.length > 3) {
+      l.mask.splice(idx, 1);
+      activeCorner = null;
+      applyMask(l); updateOverlay(); save();
+    }
+  });
+  handlesBox.appendChild(h);
+}
+
 function updateOverlay() {
   if (!editMode) return;
   wires.innerHTML = '';
@@ -438,49 +526,37 @@ function updateOverlay() {
   selPoly = null;
   for (const l of layers) {
     if (!l.visible) continue;
-    const pts = cornersPx(l);
-    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-    poly.setAttribute('points', pts.map(p => p.join(',')).join(' '));
-    poly.setAttribute('fill', 'none');
-    poly.setAttribute('stroke', l.id === selectedId ? '#4ecbff' : 'rgba(255,255,255,.18)');
-    poly.setAttribute('stroke-width', l.id === selectedId ? 1.5 : 1);
-    if (l.id === selectedId) selPoly = poly;
-    wires.appendChild(poly);
+    const sel = l.id === selectedId;
+    const poly = svgPoly(cornersPx(l), sel ? '#4ecbff' : 'rgba(255,255,255,.18)', sel ? 1.5 : 1);
+    if (sel && !maskEdit) selPoly = poly;
+    if (l.mask && l.mask.length >= 3) {
+      const editing = sel && maskEdit;
+      const mp = svgPoly(maskPx(l), sel ? '#ff9f43' : 'rgba(255,159,67,.3)', editing ? 1.5 : 1);
+      if (!editing) mp.setAttribute('stroke-dasharray', '6 4');
+      if (editing) selPoly = mp;
+    }
   }
   const l = selected();
   if (!l || !l.visible) return;
-  cornersPx(l).forEach((p, idx) => {
-    const h = document.createElement('div');
-    h.className = 'handle' + (idx === activeCorner ? ' active' : '');
-    h.style.left = p[0] + 'px';
-    h.style.top = p[1] + 'px';
-    h.addEventListener('pointerdown', e => {
-      e.stopPropagation(); e.preventDefault();
-      activeCorner = idx;
-      drag = { mode: 'corner', layer: l, idx, x0: e.clientX, y0: e.clientY,
-               start: [...l.corners[idx]] };
-      h.setPointerCapture(e.pointerId);
-      handlesBox.querySelectorAll('.handle.active').forEach(x => x.classList.remove('active'));
-      h.classList.add('active');
-    });
-    handlesBox.appendChild(h);
-  });
+  if (maskEdit && l.mask) maskPx(l).forEach((p, idx) => makeHandle(l, idx, true, p));
+  else cornersPx(l).forEach((p, idx) => makeHandle(l, idx, false, p));
 }
 
-/* mover contorno + handles de la capa seleccionada sin reconstruir el DOM */
+/* mover el polígono en edición + handles sin reconstruir el DOM */
 function repositionOverlay(l) {
-  const pts = cornersPx(l);
+  const pts = (maskEdit && l.mask) ? maskPx(l) : cornersPx(l);
   if (selPoly) selPoly.setAttribute('points', pts.map(p => p.join(',')).join(' '));
   [...handlesBox.children].forEach((h, idx) => {
+    if (!pts[idx]) return;
     h.style.left = pts[idx][0] + 'px';
     h.style.top = pts[idx][1] + 'px';
   });
 }
 
 /* ================= interacción ================= */
-function pointInQuad(px, py, c) {
+function pointInPoly(px, py, c) {
   let inside = false;
-  for (let i = 0, j = 3; i < 4; j = i++) {
+  for (let i = 0, j = c.length - 1; i < c.length; j = i++) {
     const xi = c[i][0], yi = c[i][1], xj = c[j][0], yj = c[j][1];
     if (((yi > py) !== (yj > py)) && (px < (xj-xi)*(py-yi)/(yj-yi)+xi)) inside = !inside;
   }
@@ -488,12 +564,21 @@ function pointInQuad(px, py, c) {
 }
 function topLayerAt(x, y) {
   for (let i = layers.length - 1; i >= 0; i--)
-    if (layers[i].visible && pointInQuad(x, y, cornersPx(layers[i]))) return layers[i];
+    if (layers[i].visible && pointInPoly(x, y, cornersPx(layers[i]))) return layers[i];
   return null;
 }
 
 stage.addEventListener('pointerdown', e => {
   if (!editMode) return;
+  if (maskEdit) {
+    const l = selected();
+    if (l && l.mask && pointInPoly(e.clientX, e.clientY, maskPx(l))) {
+      drag = { mode: 'maskmove', layer: l, x0: e.clientX, y0: e.clientY,
+               start: l.mask.map(c => [...c]) };
+      stage.setPointerCapture(e.pointerId);
+    }
+    return;
+  }
   const hit = topLayerAt(e.clientX, e.clientY);
   if (hit) {
     selectedId = hit.id; activeCorner = null;
@@ -510,16 +595,49 @@ window.addEventListener('pointermove', e => {
   if (!drag) return;
   const dx = (e.clientX - drag.x0) / innerWidth;
   const dy = (e.clientY - drag.y0) / innerHeight;
-  drag.layer.touched = true;
-  if (drag.mode === 'corner') {
-    drag.layer.corners[drag.idx] = [drag.start[0] + dx, drag.start[1] + dy];
+  if (drag.mode === 'maskpt') {
+    drag.layer.mask[drag.idx] = [drag.start[0] + dx, drag.start[1] + dy];
+    applyMask(drag.layer);
+  } else if (drag.mode === 'maskmove') {
+    drag.layer.mask = drag.start.map(c => [c[0] + dx, c[1] + dy]);
+    applyMask(drag.layer);
   } else {
-    drag.layer.corners = drag.start.map(c => [c[0] + dx, c[1] + dy]);
+    drag.layer.touched = true;
+    if (drag.mode === 'corner') {
+      drag.layer.corners[drag.idx] = [drag.start[0] + dx, drag.start[1] + dy];
+    } else {
+      drag.layer.corners = drag.start.map(c => [c[0] + dx, c[1] + dy]);
+    }
+    applyTransform(drag.layer);
   }
-  applyTransform(drag.layer);
   repositionOverlay(drag.layer);
 });
 window.addEventListener('pointerup', () => { if (drag) { drag = null; save(); } });
+
+function distToSegment(px, py, a, b) {
+  const dx = b[0]-a[0], dy = b[1]-a[1];
+  const len2 = dx*dx + dy*dy;
+  let t = len2 ? ((px-a[0])*dx + (py-a[1])*dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (a[0] + t*dx), py - (a[1] + t*dy));
+}
+
+/* doble click en modo máscara: insertar un punto en el borde más cercano */
+window.addEventListener('dblclick', e => {
+  if (!editMode || !maskEdit) return;
+  if (e.target.closest && e.target.closest('#panel')) return;
+  const l = selected();
+  if (!l || !l.mask) return;
+  const pts = maskPx(l);
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < pts.length; i++) {
+    const d = distToSegment(e.clientX, e.clientY, pts[i], pts[(i+1) % pts.length]);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  l.mask.splice(best + 1, 0, [e.clientX/innerWidth, e.clientY/innerHeight]);
+  activeCorner = best + 1;
+  applyMask(l); updateOverlay(); save();
+});
 
 /* rueda = escalar, Shift+rueda = rotar (nunca deforman: la proporción se mantiene) */
 window.addEventListener('wheel', e => {
@@ -528,9 +646,10 @@ window.addEventListener('wheel', e => {
   const l = selected();
   if (!l || !l.visible) return;
   e.preventDefault();
-  const pts = cornersPx(l);
-  const cx = (pts[0][0] + pts[1][0] + pts[2][0] + pts[3][0]) / 4;
-  const cy = (pts[0][1] + pts[1][1] + pts[2][1] + pts[3][1]) / 4;
+  const onMask = maskEdit && l.mask;
+  const pts = onMask ? maskPx(l) : cornersPx(l);
+  const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+  const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
   const d = e.deltaY || e.deltaX;   // con Shift muchos mouse reportan deltaX
   let out;
   if (e.shiftKey) {
@@ -544,9 +663,15 @@ window.addEventListener('wheel', e => {
     const k = d > 0 ? 0.97 : 1.03;
     out = pts.map(p => [cx + (p[0]-cx)*k, cy + (p[1]-cy)*k]);
   }
-  l.corners = out.map(p => [p[0]/innerWidth, p[1]/innerHeight]);
-  l.touched = true;
-  applyTransform(l);
+  const norm = out.map(p => [p[0]/innerWidth, p[1]/innerHeight]);
+  if (onMask) {
+    l.mask = norm;
+    applyMask(l);
+  } else {
+    l.corners = norm;
+    l.touched = true;
+    applyTransform(l);
+  }
   repositionOverlay(l);
   save();
 }, { passive: false });
@@ -568,28 +693,54 @@ window.addEventListener('keydown', e => {
   } else if (!editMode) {
     return;
   } else if (e.key === 'Delete' && l) {
-    deleteLayer(l);
+    if (maskEdit && l.mask) {
+      if (activeCorner !== null && l.mask.length > 3) {
+        l.mask.splice(activeCorner, 1);
+        activeCorner = null;
+        applyMask(l); updateOverlay(); save();
+      }
+    } else {
+      deleteLayer(l);
+    }
   } else if ((e.key === 'r' || e.key === 'R') && l) {
-    resetCorners(l);
+    if (maskEdit) {
+      l.mask = l.corners.map(c => [...c]);
+      applyMask(l); updateOverlay(); save();
+    } else {
+      resetCorners(l);
+    }
   } else if (e.key === 'Escape') {
-    selectedId = null; activeCorner = null; renderAll();
+    if (maskEdit) endMaskEdit();
+    else { selectedId = null; activeCorner = null; renderAll(); }
   } else if (e.key.startsWith('Arrow') && l) {
     e.preventDefault();
     const step = e.shiftKey ? 10 : 1;
     const dx = (e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0) / innerWidth;
     const dy = (e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0) / innerHeight;
-    if (activeCorner !== null) {
-      l.corners[activeCorner][0] += dx;
-      l.corners[activeCorner][1] += dy;
+    if (maskEdit && l.mask) {
+      if (activeCorner !== null) {
+        l.mask[activeCorner][0] += dx;
+        l.mask[activeCorner][1] += dy;
+      } else {
+        l.mask = l.mask.map(c => [c[0] + dx, c[1] + dy]);
+      }
+      applyMask(l);
     } else {
-      l.corners = l.corners.map(c => [c[0] + dx, c[1] + dy]);
+      if (activeCorner !== null) {
+        l.corners[activeCorner][0] += dx;
+        l.corners[activeCorner][1] += dy;
+      } else {
+        l.corners = l.corners.map(c => [c[0] + dx, c[1] + dy]);
+      }
+      l.touched = true;
+      applyTransform(l);
     }
-    l.touched = true;
-    applyTransform(l); updateOverlay(); save();
+    updateOverlay(); save();
   }
 });
 
 function toggleProject() {
+  maskEdit = false;
   editMode = !editMode;
   document.body.classList.toggle('projecting', !editMode);
   $('#btnProject').textContent = editMode ? 'Proyectar ▶' : 'Editar ✎';
