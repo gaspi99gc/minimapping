@@ -27,6 +27,14 @@ cada una con 4 esquinas arrastrables (warp con perspectiva real vía `matrix3d`)
 | `Supr` | borrar capa seleccionada |
 | `Esc` | deseleccionar |
 
+## Edición segura
+
+- `Ctrl+Z` deshace y `Ctrl+Shift+Z` rehace cualquier cambio de capas.
+- Candado 🔒 por capa: bloqueada no se mueve, no se borra y los clicks la
+  atraviesan.
+- `Ctrl+D` duplica la capa seleccionada (con encuadre, máscara y contenido).
+- Doble click en el nombre de una capa para renombrarla.
+
 ## Calibración por capa
 
 - **+ Cuadro**: capa vacía que nace en modo calibración (magenta) — el molde.
