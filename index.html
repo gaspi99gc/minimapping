@@ -69,10 +69,28 @@
     justify-content: center; z-index: 40; font-size: 34px; color: #4ecbff;
     background: rgba(10,20,30,.7); border: 3px dashed #4ecbff; pointer-events: none; }
 
+  /* ---- tutorial ---- */
+  #tuto { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.7);
+    display: none; align-items: center; justify-content: center; }
+  #tuto.open { display: flex; }
+  #tuto .card { position: relative; background: #16161c; border: 1px solid #333;
+    border-radius: 12px; width: min(640px, 92vw); max-height: 85vh;
+    overflow-y: auto; padding: 22px 26px; font-size: 13px; line-height: 1.6; }
+  #tuto h2 { font-size: 17px; margin-bottom: 2px; }
+  #tuto h3 { font-size: 12px; color: #4ecbff; margin: 16px 0 4px;
+    text-transform: uppercase; letter-spacing: .06em; }
+  #tuto p { color: #bbb; margin: 2px 0; }
+  #tuto kbd { background: #2a2a32; border: 1px solid #444; border-radius: 4px;
+    padding: 0 6px; font-family: inherit; font-size: 12px; color: #eee; }
+  #tuto .naranja { color: #ff9f43; }
+  #tutoClose { position: absolute; top: 10px; right: 12px; background: none;
+    border: none; color: #888; font-size: 20px; cursor: pointer; }
+  #tutoClose:hover { color: #fff; }
+
   /* ---- modo proyección: solo queda el escenario ---- */
   body.projecting { cursor: none; }
   body.projecting #panel, body.projecting #wires, body.projecting #handles,
-  body.projecting #help, body.projecting #empty { display: none; }
+  body.projecting #help, body.projecting #empty, body.projecting #tuto { display: none; }
 </style>
 </head>
 <body>
@@ -82,7 +100,7 @@
 <div id="handles"></div>
 
 <div id="panel">
-  <header>MiniMapper <button id="btnProject" title="Tab">Proyectar ▶</button></header>
+  <header>MiniMapper <span><button id="btnHelp" title="Ayuda (H)">?</button> <button id="btnProject" title="Tab">Proyectar ▶</button></span></header>
   <div class="row">
     <button id="btnAddFile">+ Video/Imagen</button>
     <button id="btnAddGrid">+ Grilla</button>
@@ -92,9 +110,52 @@
   <div id="props"></div>
 </div>
 
-<div id="help">Tab proyectar · F fullscreen · Rueda escala · Shift+rueda rota · Flechas ajuste fino (Shift ×10) · Supr borrar capa · Espacio play/pausa · R reset esquinas</div>
+<div id="help">H ayuda · Tab proyectar · F fullscreen · Rueda escala · Shift+rueda rota · Flechas ajuste fino (Shift ×10) · Supr borrar capa · Espacio play/pausa · R reset esquinas</div>
 <div id="empty">Arrastrá un video acá<br><small>o usá los botones del panel →</small></div>
 <div id="dropHint">Soltá el archivo</div>
+<div id="tuto">
+  <div class="card">
+    <button id="tutoClose" title="cerrar">✕</button>
+    <h2>Guía de MiniMapper</h2>
+    <p>Abrila cuando quieras con <kbd>H</kbd> o el botón <kbd>?</kbd> del panel.</p>
+
+    <h3>Capas</h3>
+    <p>Arrastrá un <b>video o imagen</b> a la ventana (o botón <b>+ Video/Imagen</b>).
+       <b>+ Grilla</b>: patrón de calibración para alinear antes de poner contenido.
+       <b>+ Color</b>: plano de color, ideal combinado con una máscara para pintar formas.</p>
+    <p>Click sobre una capa (en pantalla o en la lista) la selecciona.
+       En la lista: <kbd>👁</kbd> ocultar · <kbd>↑</kbd><kbd>↓</kbd> orden · <kbd>🗑</kbd> borrar (o <kbd>Supr</kbd>).
+       Con la capa seleccionada aparecen abajo su opacidad y el sonido <kbd>🔊</kbd>.</p>
+
+    <h3>Acomodar sin deformar</h3>
+    <p>Arrastrar adentro: <b>mover</b> · Rueda: <b>escalar</b> · <kbd>Shift</kbd>+rueda: <b>rotar</b>.</p>
+    <p>Flechas: ajuste fino de a 1px (<kbd>Shift</kbd> = de a 10). Mueven la esquina que tocaste último, o toda la capa.</p>
+    <p><kbd>R</kbd>: vuelve a la proporción original del video, centrado.</p>
+
+    <h3>Esquinas (perspectiva)</h3>
+    <p>Los puntos <b style="color:#4ecbff">celestes</b> deforman la capa para calzarla
+       en el objeto cuando el proyector está en ángulo. Esto sí deforma el contenido: es a propósito.</p>
+
+    <h3>Máscaras (recortar siluetas)</h3>
+    <p>Botón <b class="naranja">✂ Máscara</b>: aparece un polígono <b class="naranja">naranja</b> que recorta la capa,
+       para que el video no se derrame fuera del objeto.</p>
+    <p><b>Doble click</b> en un borde: agregar punto · <b>Click derecho</b> en un punto: borrarlo ·
+       Arrastrar adentro: mover toda la máscara · rueda, <kbd>Shift</kbd>+rueda y flechas también funcionan.</p>
+    <p>La máscara queda <b>fija a la escena</b>: podés mover el video por debajo y el recorte no se mueve.
+       <kbd>R</kbd>: rehacerla con la forma de la capa · <b>✔</b> o <kbd>Esc</kbd>: salir · <b>Quitar</b>: eliminarla.</p>
+
+    <h3>Proyectar</h3>
+    <p><kbd>Tab</kbd>: modo proyección (oculta paneles y cursor) y vuelta a edición.
+       <kbd>F</kbd>: pantalla completa · <kbd>Espacio</kbd>: play/pausa de todos los videos.</p>
+    <p>La proyección está <b>anclada a la pantalla física</b>: no se corre entre ventana y F11.
+       Mantené el zoom de Chrome en 100% (<kbd>Ctrl</kbd>+<kbd>0</kbd>).</p>
+
+    <h3>Guardado</h3>
+    <p>Todo se guarda solo en este navegador: capas, esquinas, máscaras y los videos.
+       Al reabrir la página sigue igual. Ojo: limpiar los datos de navegación lo borra.</p>
+  </div>
+</div>
+
 <input type="file" id="fileInput" hidden multiple accept="video/*,image/*">
 
 <script>
@@ -712,6 +773,10 @@ window.addEventListener('wheel', e => {
 window.addEventListener('keydown', e => {
   if (e.key === 'Tab') { e.preventDefault(); toggleProject(); return; }
   if (e.target.tagName === 'INPUT') return;   // no pisar sliders/color
+  if (e.key === 'h' || e.key === 'H') { $('#tuto').classList.toggle('open'); return; }
+  if (e.key === 'Escape' && $('#tuto').classList.contains('open')) {
+    $('#tuto').classList.remove('open'); return;
+  }
   const l = selected();
 
   if (e.key === 'f' || e.key === 'F') {
@@ -773,11 +838,19 @@ window.addEventListener('keydown', e => {
 
 function toggleProject() {
   maskEdit = false;
+  $('#tuto').classList.remove('open');
   editMode = !editMode;
   document.body.classList.toggle('projecting', !editMode);
   $('#btnProject').textContent = editMode ? 'Proyectar ▶' : 'Editar ✎';
   if (editMode) renderAll();
 }
+
+/* tutorial */
+$('#btnHelp').onclick = () => $('#tuto').classList.add('open');
+$('#tutoClose').onclick = () => $('#tuto').classList.remove('open');
+$('#tuto').addEventListener('pointerdown', e => {
+  if (e.target === $('#tuto')) $('#tuto').classList.remove('open');
+});
 
 /* archivos */
 $('#btnProject').onclick = toggleProject;

@@ -16,6 +16,7 @@ cada una con 4 esquinas arrastrables (warp con perspectiva real vía `matrix3d`)
 
 | Tecla | Acción |
 |---|---|
+| `H` | abrir/cerrar la guía de funciones dentro de la app |
 | `Tab` | alternar edición / proyección |
 | `F` | fullscreen |
 | Rueda | escalar la capa seleccionada (mantiene proporción) |
