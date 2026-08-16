@@ -138,7 +138,8 @@
     <p>Los puntos <b style="color:#4ecbff">celestes</b> redondos deforman la capa para calzarla
        en el objeto cuando el proyector está en ángulo. Esto sí deforma el contenido: es a propósito.</p>
     <p>Los <b>cuadrados en el medio de cada lado</b> mueven ese lado entero,
-       como agarrar las dos esquinas a la vez.</p>
+       como agarrar las dos esquinas a la vez. Se mueven <b>siempre recto</b>
+       (perpendicular al lado); con <kbd>Shift</kbd> quedan libres.</p>
 
     <h3>Máscaras (recortar siluetas)</h3>
     <p>Botón <b class="naranja">✂ Máscara</b>: aparece un polígono <b class="naranja">naranja</b> que recorta la capa,
@@ -748,9 +749,22 @@ window.addEventListener('pointermove', e => {
     if (drag.mode === 'corner') {
       drag.layer.corners[drag.idx] = [drag.start[0] + dx, drag.start[1] + dy];
     } else if (drag.mode === 'side') {
+      let sdx = dx, sdy = dy;
+      if (!e.shiftKey) {
+        // sin Shift el lado se mueve recto: solo perpendicular a sí mismo
+        const vx = (drag.start[1][0] - drag.start[0][0]) * SR.w;
+        const vy = (drag.start[1][1] - drag.start[0][1]) * SR.h;
+        const len = Math.hypot(vx, vy);
+        if (len > 0) {
+          const nx = -vy / len, ny = vx / len;
+          const dot = (dx * SR.w) * nx + (dy * SR.h) * ny;
+          sdx = nx * dot / SR.w;
+          sdy = ny * dot / SR.h;
+        }
+      }
       const j = (drag.idx + 1) % 4;
-      drag.layer.corners[drag.idx] = [drag.start[0][0] + dx, drag.start[0][1] + dy];
-      drag.layer.corners[j] = [drag.start[1][0] + dx, drag.start[1][1] + dy];
+      drag.layer.corners[drag.idx] = [drag.start[0][0] + sdx, drag.start[0][1] + sdy];
+      drag.layer.corners[j] = [drag.start[1][0] + sdx, drag.start[1][1] + sdy];
     } else {
       const [mdx, mdy] = clampMove(drag.start, dx, dy);
       drag.layer.corners = drag.start.map(c => [c[0] + mdx, c[1] + mdy]);
