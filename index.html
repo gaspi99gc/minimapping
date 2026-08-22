@@ -30,7 +30,9 @@
     border-radius: 50%; border: 2px solid #4ecbff; background: rgba(0,0,0,.55);
     cursor: grab; pointer-events: auto; }
   .handle.active { background: #4ecbff; }
-  .handle.mask { border-color: #ff9f43; }
+  /* punto de máscara: cuadrado = esquina, redondo = curva */
+  .handle.mask { border-color: #ff9f43; border-radius: 3px; }
+  .handle.mask.smooth { border-radius: 50%; }
   .handle.mask.active { background: #ff9f43; }
   .handle.side { width: 16px; height: 16px; margin: -8px; border-radius: 4px; }
   /* las capas no reciben clicks (todo lo maneja el stage) y las imágenes
@@ -176,6 +178,13 @@
        para que el video no se derrame fuera del objeto.</p>
     <p><b>Doble click</b> en un borde: agregar punto · <b>Click derecho</b> en un punto: borrarlo ·
        Arrastrar adentro: mover toda la máscara · rueda, <kbd>Shift</kbd>+rueda y flechas también funcionan.</p>
+    <p><b>Bordes curvos</b>: <b>doble click sobre un punto</b> lo alterna entre esquina
+       (cuadrado) y curva (redondo). Los puntos curvos hacen que el contorno pase
+       suave, para objetos redondeados u orgánicos. <b>◜ Curvar todo</b> convierte
+       toda la máscara de una.</p>
+    <p><b>◨ Invertir</b>: en vez de mostrar lo de adentro, hace un <b>agujero</b> — la
+       capa se ve en todos lados menos ahí. Sirve para tapar una zona que no querés
+       iluminar, o para que una capa de abajo asome por el hueco.</p>
     <p>La máscara queda <b>fija a la escena</b>: podés mover el video por debajo y el recorte no se mueve.
        <kbd>R</kbd>: rehacerla con la forma de la capa · <b>✔</b> o <kbd>Esc</kbd>: salir · <b>Quitar</b>: eliminarla.</p>
 
@@ -256,7 +265,7 @@ setInterval(() => {
   if (sig !== stageSig) {
     stageSig = sig;
     layoutStage();
-    layers.forEach(applyTransform);
+    layers.forEach(l => { applyTransform(l); applyMask(l); });
     updateOverlay();
   }
 }, 300);
@@ -332,7 +341,8 @@ function newLayer(type, name) {
     opacity: 1, visible: true, muted: true, color: '#ffffff',
     locked: false,    // true = la capa no se puede mover, deformar ni borrar
     calib: false,     // true = mostrar patron de calibracion en lugar del contenido
-    mask: null,       // poligono de recorte en coords de pantalla (normalizado), null = sin mascara
+    mask: null,       // contorno de recorte en coords de pantalla (normalizado), null = sin mascara
+    maskInvert: false,// true = recorta el agujero en vez del contenido
     el: null, wrap: null, media: null
   };
 }
@@ -424,16 +434,53 @@ function syncLayerStyle(l) {
   l.el.classList.toggle('calib', !!l.calib);
 }
 
+/* Un punto de máscara es [x, y] (esquina) o [x, y, 1] (curva). Las operaciones
+   que mueven puntos en bloque pierden el tercer valor, así que se restituye. */
+function keepFlags(pts, src) {
+  return pts.map((p, i) => (src[i] && src[i][2]) ? [p[0], p[1], 1] : [p[0], p[1]]);
+}
+
 function maskPx(l) {
-  return l.mask.map(toScreen);
+  return l.mask.map(c => {
+    const p = toScreen(c);
+    return c[2] ? [p[0], p[1], 1] : p;
+  });
+}
+
+/* Contorno cerrado: cada tramo es una cúbica. En un punto "curva" los tiradores
+   siguen la dirección de sus vecinos (Catmull-Rom) y el trazo pasa suave; en un
+   punto "esquina" el tirador colapsa sobre el punto y el tramo sale recto. */
+function maskPathD(pts) {
+  const n = pts.length;
+  const P = i => pts[(i % n + n) % n];
+  const f = v => v.toFixed(2);
+  let d = `M ${f(P(0)[0])} ${f(P(0)[1])}`;
+  for (let i = 0; i < n; i++) {
+    const p0 = P(i-1), p1 = P(i), p2 = P(i+1), p3 = P(i+2);
+    const c1 = p1[2] ? [p1[0] + (p2[0]-p0[0])/6, p1[1] + (p2[1]-p0[1])/6] : p1;
+    const c2 = p2[2] ? [p2[0] - (p3[0]-p1[0])/6, p2[1] - (p3[1]-p1[1])/6] : p2;
+    d += ` C ${f(c1[0])} ${f(c1[1])}, ${f(c2[0])} ${f(c2[1])}, ${f(p2[0])} ${f(p2[1])}`;
+  }
+  return d + ' Z';
 }
 
 // la mascara recorta en coordenadas de pantalla: queda fija a la escena
 // aunque despues se mueva/deforme el contenido de la capa por debajo
 function applyMask(l) {
-  l.wrap.style.clipPath = (l.mask && l.mask.length >= 3)
-    ? 'polygon(' + l.mask.map(p => (p[0]*100).toFixed(3) + '% ' + (p[1]*100).toFixed(3) + '%').join(',') + ')'
-    : '';
+  if (!l.mask || l.mask.length < 3) { l.wrap.style.clipPath = ''; return; }
+  const local = l.mask.map(c => {
+    const p = toLocal(c);
+    return c[2] ? [p[0], p[1], 1] : p;
+  });
+  const d = maskPathD(local);
+  if (l.maskInvert) {
+    // rectángulo enorme + la forma, con regla par-impar: la forma queda como agujero
+    const W = SR.w, H = SR.h;
+    const out = `M ${-W} ${-H} L ${2*W} ${-H} L ${2*W} ${2*H} L ${-W} ${2*H} Z `;
+    l.wrap.style.clipPath = `path(evenodd, '${out}${d}')`;
+  } else {
+    l.wrap.style.clipPath = `path('${d}')`;
+  }
 }
 
 function drawGrid(cv, bg) {
@@ -500,7 +547,7 @@ function metaString() {
   return JSON.stringify({ layers: layers.map(l => ({
     id: l.id, type: l.type, name: l.name, corners: l.corners,
     aspect: l.aspect, touched: l.touched, mask: l.mask, calib: l.calib,
-    locked: l.locked,
+    maskInvert: l.maskInvert, locked: l.locked,
     opacity: l.opacity, visible: l.visible, muted: l.muted, color: l.color
   })) });
 }
@@ -636,11 +683,11 @@ async function duplicateLayer(src) {
   const l = Object.assign(newLayer(src.type, src.name), JSON.parse(JSON.stringify({
     type: src.type, name: src.name, corners: src.corners, aspect: src.aspect,
     touched: src.touched, mask: src.mask, calib: src.calib, opacity: src.opacity,
-    visible: src.visible, muted: src.muted, color: src.color
+    maskInvert: src.maskInvert, visible: src.visible, muted: src.muted, color: src.color
   })));
   // correrla un toque para que se note que son dos
   l.corners = l.corners.map(c => [c[0] + 0.02, c[1] + 0.02]);
-  if (l.mask) l.mask = l.mask.map(c => [c[0] + 0.02, c[1] + 0.02]);
+  if (l.mask) l.mask = keepFlags(l.mask.map(c => [c[0] + 0.02, c[1] + 0.02]), l.mask);
   const blob = (src.type === 'video' || src.type === 'image') ? await getFile(src.id) : null;
   if (blob) putFile(l.id, blob).catch(() => {});
   buildElement(l, blob);
@@ -774,17 +821,36 @@ function renderProps() {
   const mrow = document.createElement('div');
   mrow.className = 'row';
   mrow.style.margin = '0';
-  mrow.appendChild(btn(maskEdit ? '✔ Máscara lista' : '✂ Máscara', 'recortar la capa con un polígono', () => {
+  mrow.appendChild(btn(maskEdit ? '✔ Máscara lista' : '✂ Máscara', 'recortar la capa con un contorno', () => {
     maskEdit ? endMaskEdit() : startMaskEdit(l);
   }));
   if (l.mask) mrow.appendChild(btn('Quitar', 'sacar la máscara', () => {
-    l.mask = null; maskEdit = false; applyMask(l); renderAll(); save();
+    l.mask = null; l.maskInvert = false; maskEdit = false;
+    applyMask(l); renderAll(); save();
   }));
   box.appendChild(mrow);
+
+  if (l.mask) {
+    const mrow2 = document.createElement('div');
+    mrow2.className = 'row';
+    mrow2.style.margin = '0';
+    mrow2.appendChild(btn(l.maskInvert ? '◧ Invertida' : '◨ Invertir',
+      'recortar el agujero en vez del contenido', () => {
+      l.maskInvert = !l.maskInvert; applyMask(l); renderProps(); save();
+    }));
+    const allSmooth = l.mask.every(p => p[2]);
+    mrow2.appendChild(btn(allSmooth ? '⌟ Angular todo' : '◜ Curvar todo',
+      'alternar todos los puntos entre esquina y curva', () => {
+      l.mask = l.mask.map(p => allSmooth ? [p[0], p[1]] : [p[0], p[1], 1]);
+      applyMask(l); updateOverlay(); renderProps(); save();
+    }));
+    box.appendChild(mrow2);
+  }
+
   if (maskEdit) {
     const tip = document.createElement('div');
     tip.style.cssText = 'font-size:11px;color:#999;line-height:1.5';
-    tip.textContent = 'Doble click en un borde: agregar punto. Click derecho en un punto: borrarlo. Arrastrar adentro: mover toda la máscara.';
+    tip.textContent = 'Doble click en un borde: agregar punto · Doble click en un punto: curva ⇄ esquina · Click derecho: borrarlo · Arrastrar adentro: mover toda la máscara.';
     box.appendChild(tip);
   }
 }
@@ -817,6 +883,16 @@ function svgPoly(pts, stroke, width) {
   return poly;
 }
 
+function svgCurve(d, stroke, width) {
+  const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  p.setAttribute('d', d);
+  p.setAttribute('fill', 'none');
+  p.setAttribute('stroke', stroke);
+  p.setAttribute('stroke-width', width);
+  wires.appendChild(p);
+  return p;
+}
+
 function makeHandle(l, idx, isMask, p) {
   const h = document.createElement('div');
   h.className = 'handle' + (isMask ? ' mask' : '') + (idx === activeCorner ? ' active' : '');
@@ -832,14 +908,24 @@ function makeHandle(l, idx, isMask, p) {
     handlesBox.querySelectorAll('.handle.active').forEach(x => x.classList.remove('active'));
     h.classList.add('active');
   });
-  if (isMask) h.addEventListener('contextmenu', e => {
-    e.preventDefault();
-    if (l.mask.length > 3) {
-      l.mask.splice(idx, 1);
-      activeCorner = null;
+  if (isMask) {
+    if (l.mask[idx][2]) h.classList.add('smooth');
+    h.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      if (l.mask.length > 3) {
+        l.mask.splice(idx, 1);
+        activeCorner = null;
+        applyMask(l); updateOverlay(); save();
+      }
+    });
+    // doble click sobre el punto: alterna esquina <-> curva
+    h.addEventListener('dblclick', e => {
+      e.preventDefault(); e.stopPropagation();
+      const p = l.mask[idx];
+      l.mask[idx] = p[2] ? [p[0], p[1]] : [p[0], p[1], 1];
       applyMask(l); updateOverlay(); save();
-    }
-  });
+    });
+  }
   handlesBox.appendChild(h);
 }
 
@@ -855,7 +941,7 @@ function updateOverlay() {
     if (sel && !maskEdit) selPoly = poly;
     if (l.mask && l.mask.length >= 3) {
       const editing = sel && maskEdit;
-      const mp = svgPoly(maskPx(l), sel ? '#ff9f43' : 'rgba(255,159,67,.3)', editing ? 1.5 : 1);
+      const mp = svgCurve(maskPathD(maskPx(l)), sel ? '#ff9f43' : 'rgba(255,159,67,.3)', editing ? 1.5 : 1);
       if (!editing) mp.setAttribute('stroke-dasharray', '6 4');
       if (editing) selPoly = mp;
     }
@@ -896,7 +982,10 @@ function makeSideHandle(l, idx, p) {
 function repositionOverlay(l) {
   const onMask = maskEdit && l.mask;
   const pts = onMask ? maskPx(l) : cornersPx(l);
-  if (selPoly) selPoly.setAttribute('points', pts.map(p => p.join(',')).join(' '));
+  if (selPoly) {
+    if (selPoly.tagName === 'path') selPoly.setAttribute('d', maskPathD(pts));
+    else selPoly.setAttribute('points', pts.map(p => [p[0], p[1]].join(',')).join(' '));
+  }
   const all = onMask ? pts : pts.concat(pts.map((p, i) => {
     const q = pts[(i + 1) % 4];
     return [(p[0]+q[0])/2, (p[1]+q[1])/2];
@@ -964,11 +1053,12 @@ window.addEventListener('pointermove', e => {
   const dx = (e.clientX - drag.x0) / SR.w;
   const dy = (e.clientY - drag.y0) / SR.h;
   if (drag.mode === 'maskpt') {
-    drag.layer.mask[drag.idx] = [drag.start[0] + dx, drag.start[1] + dy];
+    const s = drag.start;
+    drag.layer.mask[drag.idx] = s[2] ? [s[0] + dx, s[1] + dy, 1] : [s[0] + dx, s[1] + dy];
     applyMask(drag.layer);
   } else if (drag.mode === 'maskmove') {
     const [mdx, mdy] = clampMove(drag.start, dx, dy);
-    drag.layer.mask = drag.start.map(c => [c[0] + mdx, c[1] + mdy]);
+    drag.layer.mask = keepFlags(drag.start.map(c => [c[0] + mdx, c[1] + mdy]), drag.start);
     applyMask(drag.layer);
   } else {
     drag.layer.touched = true;
@@ -1021,7 +1111,10 @@ window.addEventListener('dblclick', e => {
     const d = distToSegment(e.clientX, e.clientY, pts[i], pts[(i+1) % pts.length]);
     if (d < bestD) { bestD = d; best = i; }
   }
-  l.mask.splice(best + 1, 0, fromScreen(e.clientX, e.clientY));
+  // si el borde donde cae ya era curvo, el punto nuevo nace curvo
+  const p = fromScreen(e.clientX, e.clientY);
+  const curvo = l.mask[best][2] && l.mask[(best + 1) % l.mask.length][2];
+  l.mask.splice(best + 1, 0, curvo ? [p[0], p[1], 1] : p);
   activeCorner = best + 1;
   applyMask(l); updateOverlay(); save();
 });
@@ -1052,7 +1145,7 @@ window.addEventListener('wheel', e => {
   }
   const norm = out.map(p => fromScreen(p[0], p[1]));
   if (onMask) {
-    l.mask = norm;
+    l.mask = keepFlags(norm, l.mask);
     applyMask(l);
   } else {
     l.corners = norm;
@@ -1130,7 +1223,7 @@ window.addEventListener('keydown', e => {
         l.mask[activeCorner][1] += dy;
       } else {
         const [mdx, mdy] = clampMove(l.mask, dx, dy);
-        l.mask = l.mask.map(c => [c[0] + mdx, c[1] + mdy]);
+        l.mask = keepFlags(l.mask.map(c => [c[0] + mdx, c[1] + mdy]), l.mask);
       }
       applyMask(l);
     } else {
@@ -1221,7 +1314,7 @@ window.addEventListener('drop', e => {
 
 window.addEventListener('resize', () => {
   layoutStage();
-  layers.forEach(applyTransform);
+  layers.forEach(l => { applyTransform(l); applyMask(l); });
   updateOverlay();
 });
 

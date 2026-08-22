@@ -69,6 +69,11 @@ naranja que recorta la capa (para que el video no se "derrame" fuera del objeto)
 - **Doble click** en un borde agrega un punto; **click derecho** sobre un punto
   lo borra. Arrastrando adentro se mueve toda la máscara; rueda escala,
   Shift+rueda rota, flechas ajuste fino.
+- **Bordes curvos**: doble click sobre un punto lo alterna entre esquina
+  (cuadrado) y curva (redondo), para objetos redondeados u orgánicos.
+  **◜ Curvar todo** convierte la máscara entera de una.
+- **◨ Invertir**: la máscara pasa a ser un agujero — la capa se ve en todos
+  lados menos dentro del contorno.
 - La máscara queda **fija a la escena**: si después movés el video por debajo,
   el recorte no se mueve (que es lo que querés una vez calzado el objeto).
 - **✔ Máscara lista** (o Esc) sale del modo; **Quitar** la elimina.
