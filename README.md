@@ -19,8 +19,8 @@ cada una con 4 esquinas arrastrables (warp con perspectiva real vía `matrix3d`)
 1. Abrir `index.html` en Chrome (o Edge).
 2. Llevar la ventana a la pantalla del proyector y apretar `F` (o F11) para fullscreen.
 3. Arrastrar un video (MP4/WebM) a la ventana → aparece como capa.
-4. Arrastrar las 4 esquinas hasta que calce sobre el objeto. La capa **Grilla**
-   sirve para calibrar antes de poner contenido real.
+4. Arrastrar las 4 esquinas hasta que calce sobre el objeto. La tecla **C**
+   pinta la capa de magenta para calibrarla antes de poner el video.
 5. `Tab` → modo proyección (se oculta todo el UI y el cursor).
 
 ## Atajos
@@ -62,21 +62,24 @@ cada una con 4 esquinas arrastrables (warp con perspectiva real vía `matrix3d`)
 
 ## Máscaras
 
-Con una capa seleccionada, botón **✂ Máscara** en el panel: aparece un polígono
-naranja que recorta la capa (para que el video no se "derrame" fuera del objeto).
+Con una capa seleccionada, botones **✂ + Mostrar** / **✂ + Tapar** en el panel.
+Cada máscara es un contorno editable que recorta la capa.
 
-- Arrastrá los puntos naranjas para seguir la silueta del objeto.
+- Arrastrá los puntos para seguir la silueta del objeto.
 - **Doble click** en un borde agrega un punto; **click derecho** sobre un punto
   lo borra. Arrastrando adentro se mueve toda la máscara; rueda escala,
   Shift+rueda rota, flechas ajuste fino.
+- Una capa puede tener **varias máscaras**: **◧ Mostrar** (la capa se ve solo
+  adentro) y **◨ Tapar** (agujero: la capa no se ve ahí). `⇄` cambia la clase.
+- **Efecto "pasa por detrás"**: una *Mostrar* que cubra la pared + una *Tapar*
+  con la silueta del objeto que está adelante. El video corre por la pared y
+  desaparece justo donde está el objeto.
 - **Bordes curvos**: doble click sobre un punto lo alterna entre esquina
   (cuadrado) y curva (redondo), para objetos redondeados u orgánicos.
-  **◜ Curvar todo** convierte la máscara entera de una.
-- **◨ Invertir**: la máscara pasa a ser un agujero — la capa se ve en todos
-  lados menos dentro del contorno.
+  **◜** convierte la máscara entera de una.
 - La máscara queda **fija a la escena**: si después movés el video por debajo,
   el recorte no se mueve (que es lo que querés una vez calzado el objeto).
-- **✔ Máscara lista** (o Esc) sale del modo; **Quitar** la elimina.
+- **✔** (o Esc) deja de editar la máscara; **🗑** la elimina.
 
 ## Notas
 
