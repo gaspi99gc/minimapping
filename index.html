@@ -58,7 +58,10 @@
   #layerList { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
   .item { display: flex; align-items: center; gap: 6px; padding: 5px 6px;
     border-radius: 6px; border: 1px solid transparent; cursor: pointer; }
-  .item.sel { border-color: #4ecbff; background: rgba(78,203,255,.08); }
+  .item.sel { border-color: rgba(78,203,255,.5); background: rgba(78,203,255,.08); }
+  .item.primary { border-color: #4ecbff; }
+  .item .grp { font-size: 10px; color: #4ecbff; }
+  #groupRow:empty { display: none; }
   .item .name { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .item button { padding: 2px 5px; font-size: 11px; }
 
@@ -129,6 +132,7 @@
     <button id="btnTest">▦ Test proyector (G)</button>
     <button id="btnPaste" hidden>⎙ Pegar capa</button>
   </div>
+  <div id="groupRow" class="row"></div>
   <div id="layerList"></div>
   <div id="props"></div>
 </div>
@@ -150,6 +154,23 @@
     <p>Click sobre una capa (en pantalla o en la lista) la selecciona.
        En la lista: <kbd>👁</kbd> ocultar · <kbd>↑</kbd><kbd>↓</kbd> orden · <kbd>🗑</kbd> borrar (o <kbd>Supr</kbd>).
        Con la capa seleccionada aparecen abajo su opacidad y el sonido <kbd>🔊</kbd>.</p>
+
+    <h3>Varias capas y grupos</h3>
+    <p><kbd>Ctrl</kbd>+<b>click</b> (en la pantalla o en la lista) suma o saca capas de
+       la selección · <kbd>Ctrl</kbd>+<kbd>A</kbd> selecciona todas. La de borde lleno
+       es la <b>primaria</b>: la del panel y la de los handles.</p>
+    <p>Con varias elegidas, <b>mover, escalar y rotar afectan a todas juntas</b>,
+       alrededor del centro del conjunto. Las esquinas y las máscaras se siguen
+       editando de a una, en la primaria.</p>
+    <p><kbd>Ctrl</kbd>+<kbd>G</kbd> las <b>agrupa</b>: desde ahí clickear cualquiera
+       selecciona todo el grupo, así el conjunto se mueve como un bloque para
+       centrarlo sobre los objetos. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> desagrupa.</p>
+    <p>Al mover un grupo <b>las máscaras viajan con él</b> (es un bloque rígido).
+       Una capa sola mantiene su máscara fija, que es lo que sirve para encuadrar
+       el video por debajo de un recorte ya calibrado.</p>
+    <p>El candado de una capa agrupada <b>traba todo el grupo</b>, y si hay algo
+       trabado en la selección <kbd>Supr</kbd> no borra nada: el grupo se borra
+       entero o no se borra.</p>
 
     <h3>Seguridad al editar</h3>
     <p><kbd>Ctrl</kbd>+<kbd>Z</kbd> deshace cualquier cambio (capas, esquinas, máscaras);
@@ -292,7 +313,8 @@ const toLocal = c => [c[0]*SR.w, c[1]*SR.h];                // normalizado -> px
 const fromScreen = (x, y) => [(x - SR.x)/SR.w, (y - SR.y)/SR.h];
 
 let layers = [];        // [{id,type,name,corners,opacity,visible,muted,color,el,media}]
-let selectedId = null;
+let selectedId = null;          // capa primaria: la del panel y los handles
+let selectedIds = new Set();    // todas las seleccionadas (siempre incluye la primaria)
 let activeCorner = null; // índice de esquina activa (para flechas)
 let editMode = true;
 let drag = null;
@@ -358,6 +380,7 @@ function newLayer(type, name) {
     touched: false,   // true apenas el usuario mueve/deforma la capa
     opacity: 1, visible: true, muted: true, color: '#ffffff',
     locked: false,    // true = la capa no se puede mover, deformar ni borrar
+    group: null,      // id de grupo: las capas del mismo grupo se mueven juntas
     calib: false,     // true = mostrar patron de calibracion en lugar del contenido
     masks: [],        // lista de {pts, sub}: contornos de recorte en coords de pantalla
                       // (normalizadas). sub=false muestra, sub=true tapa (agujero)
@@ -546,7 +569,7 @@ function addLayerFromFile(file) {
   const l = newLayer(type, file.name);
   buildElement(l, file);
   layers.push(l);
-  selectedId = l.id; activeCorner = null;
+  selectLayer(l, false);
   putFile(l.id, file).catch(() =>
     console.warn('No se pudo guardar el archivo para la próxima sesión'));
   renderAll(); save();
@@ -556,7 +579,7 @@ function addSimpleLayer(type) {
   const l = newLayer(type, type === 'grid' ? 'Grilla' : 'Color');
   buildElement(l, null);
   layers.push(l);
-  selectedId = l.id; activeCorner = null;
+  selectLayer(l, false);
   renderAll(); save();
 }
 
@@ -580,11 +603,56 @@ function deleteLayer(l) {
   l.wrap.remove();
   // el archivo queda en IndexedDB para poder deshacer; se limpia al próximo arranque
   layers = layers.filter(x => x.id !== l.id);
-  if (selectedId === l.id) { selectedId = null; activeCorner = null; maskIdx = null; }
+  selectedIds.delete(l.id);
+  if (selectedId === l.id) { selectedId = [...selectedIds][0] || null; activeCorner = null; maskIdx = null; }
   renderAll(); save();
 }
 
 const selected = () => layers.find(l => l.id === selectedId) || null;
+const selectedLayers = () => layers.filter(l => selectedIds.has(l.id));
+
+/* las capas agrupadas se seleccionan siempre juntas: el grupo es una unidad */
+const groupOf = l => l.group ? layers.filter(x => x.group === l.group) : [l];
+
+function selectLayer(l, additive) {
+  if (!l) { selectedIds.clear(); selectedId = null; maskIdx = null; activeCorner = null; return; }
+  const grp = groupOf(l);
+  if (additive) {
+    if (selectedIds.has(l.id)) {                    // ya estaba: sacarla
+      for (const g of grp) selectedIds.delete(g.id);
+      if (!selectedIds.has(selectedId)) selectedId = [...selectedIds][0] || null;
+    } else {
+      for (const g of grp) selectedIds.add(g.id);
+      selectedId = l.id;
+    }
+  } else {
+    selectedIds = new Set(grp.map(g => g.id));
+    selectedId = l.id;
+  }
+  activeCorner = null;
+}
+
+/* al mover un conjunto (o un grupo) las máscaras viajan con él: es un bloque
+   rígido. Una capa suelta mantiene su máscara fija a la escena, que es lo que
+   sirve para encuadrar el video por debajo de un recorte ya calibrado. */
+const rigidMove = () => selectedIds.size > 1;
+
+function groupSelected() {
+  const set = selectedLayers();
+  if (set.length < 2) { flash('Elegí al menos dos capas (Ctrl+click)'); return; }
+  const gid = 'g' + Date.now().toString(36);
+  for (const l of set) l.group = gid;
+  flash(`${set.length} capas agrupadas`);
+  renderAll(); save();
+}
+
+function ungroupSelected() {
+  const set = selectedLayers().filter(l => l.group);
+  if (!set.length) { flash('No hay ningún grupo seleccionado'); return; }
+  for (const l of set) l.group = null;
+  flash('Grupo deshecho');
+  renderAll(); save();
+}
 
 /* aviso breve al pie: confirma acciones que no se ven solas (copiar, pegar) */
 let flashT = null;
@@ -601,7 +669,7 @@ function metaString() {
   return JSON.stringify({ layers: layers.map(l => ({
     id: l.id, type: l.type, name: l.name, corners: l.corners,
     aspect: l.aspect, touched: l.touched, masks: l.masks, calib: l.calib,
-    locked: l.locked,
+    locked: l.locked, group: l.group,
     opacity: l.opacity, visible: l.visible, muted: l.muted, color: l.color
   })) });
 }
@@ -651,7 +719,9 @@ async function applyState(json) {
   }
   for (const l of old.values()) l.wrap.remove();
   layers = next;
-  if (!layers.find(x => x.id === selectedId)) { selectedId = null; maskIdx = null; activeCorner = null; }
+  const vivos = new Set(layers.map(x => x.id));
+  selectedIds = new Set([...selectedIds].filter(id => vivos.has(id)));
+  if (!vivos.has(selectedId)) { selectedId = [...selectedIds][0] || null; maskIdx = null; activeCorner = null; }
   try { localStorage.setItem(KEY, json); } catch (e) {}
   renderAll();
 }
@@ -758,7 +828,7 @@ async function insertLayer(meta, blob, at) {
   if (blob) putFile(l.id, blob).catch(() => {});
   buildElement(l, blob);
   layers.splice(at === undefined ? layers.length : at, 0, l);
-  selectedId = l.id; activeCorner = null; maskIdx = null;
+  selectLayer(l, false); maskIdx = null;
   renderAll(); save();
   return l;
 }
@@ -799,9 +869,21 @@ function renderAll() {
   for (const l of layers) stage.appendChild(l.wrap);
   $('#empty').style.display = layers.length ? 'none' : '';
   $('#btnPaste').hidden = !clipboard;
+  renderGroupRow();
   renderList();
   renderProps();
   updateOverlay();
+}
+
+function renderGroupRow() {
+  const box = $('#groupRow');
+  box.innerHTML = '';
+  const set = selectedLayers();
+  if (set.length > 1 && !set.every(l => l.group && l.group === set[0].group))
+    box.appendChild(btn(`⛓ Agrupar ${set.length} capas`,
+      'que se muevan siempre juntas, como un bloque (Ctrl+G)', groupSelected));
+  if (set.some(l => l.group))
+    box.appendChild(btn('⛓̸ Desagrupar', 'volver a capas sueltas (Ctrl+Shift+G)', ungroupSelected));
 }
 
 function renderList() {
@@ -811,10 +893,10 @@ function renderList() {
   [...layers].reverse().forEach(l => {
     const i = layers.indexOf(l);
     const item = document.createElement('div');
-    item.className = 'item' + (l.id === selectedId ? ' sel' : '');
+    item.className = 'item' + (selectedIds.has(l.id) ? ' sel' : '') + (l.id === selectedId ? ' primary' : '');
     item.onclick = () => {
       if (selectedId !== l.id) maskIdx = null;
-      selectedId = l.id; activeCorner = null; renderAll();
+      selectLayer(l, e.ctrlKey || e.metaKey); renderAll();
     };
 
     const eye = btn(l.visible ? '👁' : '—', 'mostrar/ocultar', e => {
@@ -822,6 +904,11 @@ function renderList() {
     });
     const name = document.createElement('span');
     name.className = 'name'; name.textContent = l.name; name.title = l.name;
+    let grp = null;
+    if (l.group) {
+      grp = document.createElement('span');
+      grp.className = 'grp'; grp.textContent = '⛓'; grp.title = 'agrupada';
+    }
     if (l.locked) name.style.color = '#777';
     name.ondblclick = e => {
       e.stopPropagation();
@@ -841,8 +928,11 @@ function renderList() {
     };
     const lock = btn(l.locked ? '🔒' : '🔓', l.locked ? 'destrabar' : 'bloquear (no se mueve ni se borra)', e => {
       e.stopPropagation();
-      l.locked = !l.locked;
-      if (l.locked && selectedId === l.id) maskIdx = null;
+      const val = !l.locked;
+      // el candado toma todo el grupo: si no, un grupo medio trabado se
+      // rompería al moverlo (unas capas viajan y otras no)
+      for (const g of groupOf(l)) g.locked = val;
+      if (val && selectedId === l.id) maskIdx = null;
       renderAll(); save();
     });
     const up = btn('↑', 'subir', e => {
@@ -855,7 +945,9 @@ function renderList() {
     });
     const del = btn('🗑', 'borrar', e => { e.stopPropagation(); deleteLayer(l); });
 
-    item.append(eye, name, lock, up, down);
+    item.append(eye, name);
+    if (grp) item.append(grp);
+    item.append(lock, up, down);
     if (!l.locked) item.append(del);
     box.appendChild(item);
   });
@@ -1052,8 +1144,12 @@ function updateOverlay() {
   selPoly = null;
   for (const l of layers) {
     if (!l.visible) continue;
-    const sel = l.id === selectedId;
-    const poly = svgPoly(cornersPx(l), sel ? '#4ecbff' : 'rgba(255,255,255,.18)', sel ? 1.5 : 1);
+    const sel = l.id === selectedId;                  // primaria: la de los handles
+    const inSel = selectedIds.has(l.id);              // dentro de la selección
+    const poly = svgPoly(cornersPx(l),
+      sel ? '#4ecbff' : inSel ? 'rgba(78,203,255,.6)' : 'rgba(255,255,255,.18)',
+      inSel ? 1.5 : 1);
+    if (inSel && !sel) poly.setAttribute('stroke-dasharray', '5 3');
     if (sel && maskIdx === null) selPoly = poly;
     l.masks.forEach((m, i) => {
       if (m.pts.length < 3) return;
@@ -1162,12 +1258,16 @@ stage.addEventListener('pointerdown', e => {
   }
   const hit = topLayerAt(e.clientX, e.clientY);
   if (hit) {
-    selectedId = hit.id; activeCorner = null;
-    drag = { mode: 'move', layer: hit, x0: e.clientX, y0: e.clientY,
-             start: hit.corners.map(c => [...c]) };
+    selectLayer(hit, e.ctrlKey || e.metaKey);
+    // se arrastra todo lo seleccionado; con varias capas viajan también sus máscaras
+    const set = selectedLayers().filter(x => !x.locked);
+    drag = { mode: 'move', layer: hit, set, rigid: rigidMove(),
+             x0: e.clientX, y0: e.clientY,
+             start: set.map(x => x.corners.map(c => [...c])),
+             startM: set.map(x => x.masks.map(m => m.pts.map(c => [...c]))) };
     stage.setPointerCapture(e.pointerId);
   } else {
-    selectedId = null; activeCorner = null;
+    if (!(e.ctrlKey || e.metaKey)) selectLayer(null);
   }
   renderAll();
 });
@@ -1184,6 +1284,22 @@ window.addEventListener('pointermove', e => {
     const [mdx, mdy] = clampMove(drag.start, dx, dy);
     drag.mask.pts = keepFlags(drag.start.map(c => [c[0] + mdx, c[1] + mdy]), drag.start);
     applyMask(drag.layer);
+  } else if (drag.mode === 'move') {
+    // el tope se calcula sobre el conjunto, así el bloque se mueve como uno solo
+    const todo = drag.start.flat().concat(drag.rigid ? drag.startM.flat(2) : []);
+    const [mdx, mdy] = clampMove(todo, dx, dy);
+    drag.set.forEach((x, i) => {
+      x.touched = true;
+      x.corners = drag.start[i].map(c => [c[0] + mdx, c[1] + mdy]);
+      if (drag.rigid) x.masks.forEach((m, j) => {
+        m.pts = keepFlags(drag.startM[i][j].map(c => [c[0] + mdx, c[1] + mdy]), drag.startM[i][j]);
+        applyMask(x);
+      });
+      applyTransform(x);
+    });
+    // con una sola capa alcanza con recolocar; con varias hay que redibujar contornos
+    if (drag.set.length > 1) updateOverlay(); else repositionOverlay(drag.layer);
+    return;
   } else {
     drag.layer.touched = true;
     if (drag.mode === 'corner') {
@@ -1205,9 +1321,6 @@ window.addEventListener('pointermove', e => {
       const j = (drag.idx + 1) % 4;
       drag.layer.corners[drag.idx] = [drag.start[0][0] + sdx, drag.start[0][1] + sdy];
       drag.layer.corners[j] = [drag.start[1][0] + sdx, drag.start[1][1] + sdy];
-    } else {
-      const [mdx, mdy] = clampMove(drag.start, dx, dy);
-      drag.layer.corners = drag.start.map(c => [c[0] + mdx, c[1] + mdy]);
     }
     applyTransform(drag.layer);
   }
@@ -1253,32 +1366,48 @@ window.addEventListener('wheel', e => {
   e.preventDefault();
   const em = editingMask();
   const onMask = !!em;
-  const pts = onMask ? maskPx(em) : cornersPx(l);
-  const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
-  const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
   const d = e.deltaY || e.deltaX;   // con Shift muchos mouse reportan deltaX
-  let out;
+
+  // el centro de la operación es el del conjunto: un grupo escala y rota como
+  // un bloque, no cada capa sobre sí misma
+  const set = onMask ? [] : selectedLayers().filter(x => !x.locked);
+  const rigid = !onMask && rigidMove();
+  const ref = onMask ? [maskPx(em)]
+    : set.map(x => cornersPx(x)).concat(rigid ? set.flatMap(x => x.masks.map(maskPx)) : []);
+  const all = ref.flat();
+  if (!all.length) return;
+  const cx = all.reduce((s, p) => s + p[0], 0) / all.length;
+  const cy = all.reduce((s, p) => s + p[1], 0) / all.length;
+
+  let tr;
   if (e.shiftKey) {
     const a = (d > 0 ? 1 : -1) * Math.PI / 180;   // 1 grado por tick
     const cos = Math.cos(a), sin = Math.sin(a);
-    out = pts.map(p => {
+    tr = p => {
       const x = p[0] - cx, y = p[1] - cy;
       return [cx + x*cos - y*sin, cy + x*sin + y*cos];
-    });
+    };
   } else {
     const k = d > 0 ? 0.97 : 1.03;
-    out = pts.map(p => [cx + (p[0]-cx)*k, cy + (p[1]-cy)*k]);
+    tr = p => [cx + (p[0]-cx)*k, cy + (p[1]-cy)*k];
   }
-  const norm = out.map(p => fromScreen(p[0], p[1]));
+  const apply = pts => pts.map(p => { const q = tr(p); return fromScreen(q[0], q[1]); });
+
   if (onMask) {
-    em.pts = keepFlags(norm, em.pts);
+    em.pts = keepFlags(apply(maskPx(em)), em.pts);
     applyMask(l);
   } else {
-    l.corners = norm;
-    l.touched = true;
-    applyTransform(l);
+    for (const x of set) {
+      x.corners = apply(cornersPx(x));
+      x.touched = true;
+      applyTransform(x);
+      if (rigid) {
+        for (const m of x.masks) m.pts = keepFlags(apply(maskPx(m)), m.pts);
+        applyMask(x);
+      }
+    }
   }
-  repositionOverlay(l);
+  if (set.length > 1) updateOverlay(); else repositionOverlay(l);
   save();
 }, { passive: false });
 
@@ -1298,6 +1427,15 @@ window.addEventListener('keydown', e => {
     if (k === 'c') { const cl = selected(); if (cl) { e.preventDefault(); copyLayer(cl); } return; }
     if (k === 'x') { const xl = selected(); if (xl) { e.preventDefault(); cutLayer(xl); } return; }
     if (k === 'v') { e.preventDefault(); pasteLayer(); return; }
+    if (k === 'g') { e.preventDefault(); e.shiftKey ? ungroupSelected() : groupSelected(); return; }
+    if (k === 'a') {
+      e.preventDefault();
+      selectedIds = new Set(layers.map(x => x.id));
+      selectedId = layers.length ? layers[layers.length-1].id : null;
+      maskIdx = null; activeCorner = null;
+      renderAll();
+      return;
+    }
   }
   if (e.target.tagName === 'INPUT') return;   // no pisar sliders/color
   if (e.key === 'h' || e.key === 'H') { $('#tuto').classList.toggle('open'); return; }
@@ -1326,8 +1464,11 @@ window.addEventListener('keydown', e => {
         activeCorner = null;
         applyMask(l); updateOverlay(); save();
       }
-    } else if (!l.locked) {
-      deleteLayer(l);
+    } else {
+      // un grupo se borra entero o no se borra: si hay alguna trabada, no va
+      const set = selectedLayers();
+      if (set.some(x => x.locked)) flash('Hay capas bloqueadas en la selección');
+      else { for (const x of set.slice()) deleteLayer(x); }
     }
   } else if ((e.key === 'r' || e.key === 'R') && l && !l.locked) {
     const m = editingMask();
@@ -1342,7 +1483,7 @@ window.addEventListener('keydown', e => {
     syncLayerStyle(l); renderProps(); save();
   } else if (e.key === 'Escape') {
     if (maskIdx !== null) endMaskEdit();
-    else { selectedId = null; activeCorner = null; renderAll(); }
+    else { selectLayer(null); renderAll(); }
   } else if (e.key.startsWith('Arrow') && l && !l.locked) {
     e.preventDefault();
     const step = e.shiftKey ? 10 : 1;
@@ -1358,16 +1499,27 @@ window.addEventListener('keydown', e => {
         em.pts = keepFlags(em.pts.map(c => [c[0] + mdx, c[1] + mdy]), em.pts);
       }
       applyMask(l);
-    } else {
-      if (activeCorner !== null) {
-        l.corners[activeCorner][0] += dx;
-        l.corners[activeCorner][1] += dy;
-      } else {
-        const [mdx, mdy] = clampMove(l.corners, dx, dy);
-        l.corners = l.corners.map(c => [c[0] + mdx, c[1] + mdy]);
-      }
+    } else if (activeCorner !== null) {
+      l.corners[activeCorner][0] += dx;
+      l.corners[activeCorner][1] += dy;
       l.touched = true;
       applyTransform(l);
+    } else {
+      // sin esquina activa se mueve toda la selección, con su tope en conjunto
+      const set = selectedLayers().filter(x => !x.locked);
+      const rigid = rigidMove();
+      const todo = set.flatMap(x => x.corners)
+        .concat(rigid ? set.flatMap(x => x.masks.flatMap(m => m.pts)) : []);
+      const [mdx, mdy] = clampMove(todo, dx, dy);
+      for (const x of set) {
+        x.corners = x.corners.map(c => [c[0] + mdx, c[1] + mdy]);
+        x.touched = true;
+        applyTransform(x);
+        if (rigid) {
+          for (const m of x.masks) m.pts = keepFlags(m.pts.map(c => [c[0] + mdx, c[1] + mdy]), m.pts);
+          applyMask(x);
+        }
+      }
     }
     updateOverlay(); save();
   }
@@ -1401,7 +1553,7 @@ $('#btnAddFrame').onclick = () => {
   l.calib = true;
   buildElement(l, null);
   layers.push(l);
-  selectedId = l.id; activeCorner = null;
+  selectLayer(l, false);
   renderAll(); save();
 };
 $('#fileInput').onchange = e => {

@@ -38,6 +38,19 @@ cada una con 4 esquinas arrastrables (warp con perspectiva real vía `matrix3d`)
 | `Supr` | borrar capa seleccionada |
 | `Esc` | deseleccionar |
 
+## Varias capas y grupos
+
+- `Ctrl`+click (en pantalla o en la lista) suma/saca capas de la selección;
+  `Ctrl+A` selecciona todas. La de borde lleno es la **primaria** (panel y handles).
+- Con varias elegidas, **mover, escalar y rotar afectan a todas juntas**, alrededor
+  del centro del conjunto. Esquinas y máscaras se editan de a una, en la primaria.
+- `Ctrl+G` **agrupa**: desde ahí clickear cualquiera selecciona todo el grupo, y el
+  conjunto se mueve como un bloque. `Ctrl+Shift+G` desagrupa.
+- Al mover un grupo **las máscaras viajan con él**. Una capa sola mantiene su
+  máscara fija a la escena (para encuadrar el video bajo un recorte calibrado).
+- El candado de una capa agrupada traba todo el grupo; si hay algo trabado en la
+  selección, `Supr` no borra nada.
+
 ## Edición segura
 
 - `Ctrl+Z` deshace y `Ctrl+Shift+Z` rehace cualquier cambio de capas.
