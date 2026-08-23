@@ -71,6 +71,12 @@
     background: none; cursor: pointer; }
 
   /* ---- extras ---- */
+  #flash { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%);
+    z-index: 50; font-size: 13px; background: rgba(18,18,22,.95); color: #eee;
+    border: 1px solid #444; border-radius: 8px; padding: 7px 14px;
+    pointer-events: none; opacity: 0; transition: opacity .18s; }
+  #flash.on { opacity: 1; }
+  body.projecting #flash { display: none; }
   #help { position: fixed; left: 12px; bottom: 12px; z-index: 30; font-size: 12px;
     color: #999; background: rgba(18,18,22,.85); padding: 6px 10px;
     border-radius: 8px; border: 1px solid #333; }
@@ -121,6 +127,7 @@
   </div>
   <div class="row">
     <button id="btnTest">▦ Test proyector (G)</button>
+    <button id="btnPaste" hidden>⎙ Pegar capa</button>
   </div>
   <div id="layerList"></div>
   <div id="props"></div>
@@ -129,6 +136,7 @@
 <div id="help">H ayuda · Tab proyectar · Ctrl+Z deshacer · F fullscreen · G test · C calibrar · Rueda escala · Shift+rueda rota · Flechas ajuste fino (Shift ×10) · Supr borrar capa · Espacio play/pausa · R reset esquinas</div>
 <div id="empty">Arrastrá un video acá<br><small>o usá los botones del panel →</small></div>
 <div id="dropHint">Soltá el archivo</div>
+<div id="flash"></div>
 <div id="tuto">
   <div class="card">
     <button id="tutoClose" title="cerrar">✕</button>
@@ -148,8 +156,12 @@
        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> rehace.</p>
     <p><kbd>🔒</kbd> en la lista bloquea la capa: no se puede mover, deformar ni borrar,
        y los clicks la atraviesan. Ideal para lo que ya calibraste.</p>
-    <p><kbd>Ctrl</kbd>+<kbd>D</kbd> duplica la capa seleccionada con encuadre y máscara ·
+    <p><kbd>Ctrl</kbd>+<kbd>D</kbd> duplica la capa seleccionada con encuadre y máscaras ·
        <b>Doble click</b> en el nombre de una capa para renombrarla.</p>
+    <p><b>Copiar y pegar</b>: <kbd>Ctrl</kbd>+<kbd>C</kbd> copia la capa,
+       <kbd>Ctrl</kbd>+<kbd>V</kbd> la pega — se puede pegar <b>las veces que quieras</b>,
+       y cada copia sale un poco corrida. <kbd>Ctrl</kbd>+<kbd>X</kbd> corta.
+       Se copia todo: video, encuadre y máscaras.</p>
 
     <h3>Calibrar antes de poner el video</h3>
     <p><b>🎯 Calibrar</b> (o <kbd>C</kbd>): la capa se pinta con un patrón
@@ -574,6 +586,16 @@ function deleteLayer(l) {
 
 const selected = () => layers.find(l => l.id === selectedId) || null;
 
+/* aviso breve al pie: confirma acciones que no se ven solas (copiar, pegar) */
+let flashT = null;
+function flash(msg) {
+  const el = $('#flash');
+  el.textContent = msg;
+  el.classList.add('on');
+  clearTimeout(flashT);
+  flashT = setTimeout(() => el.classList.remove('on'), 1400);
+}
+
 /* ================= persistencia ================= */
 function metaString() {
   return JSON.stringify({ layers: layers.map(l => ({
@@ -713,22 +735,62 @@ async function cleanOrphanFiles() {
 }
 
 /* duplicar una capa con su encuadre, máscara y contenido */
-async function duplicateLayer(src) {
-  const l = Object.assign(newLayer(src.type, src.name), JSON.parse(JSON.stringify({
-    type: src.type, name: src.name, corners: src.corners, aspect: src.aspect,
-    touched: src.touched, masks: src.masks, calib: src.calib, opacity: src.opacity,
-    visible: src.visible, muted: src.muted, color: src.color
-  })));
-  // correrla un toque para que se note que son dos
-  l.corners = l.corners.map(c => [c[0] + 0.02, c[1] + 0.02]);
-  for (const m of l.masks)
-    m.pts = keepFlags(m.pts.map(c => [c[0] + 0.02, c[1] + 0.02]), m.pts);
-  const blob = (src.type === 'video' || src.type === 'image') ? await getFile(src.id) : null;
+/* copia serializable de una capa (sin el candado: lo pegado nace destrabado) */
+function layerMeta(l) {
+  return JSON.parse(JSON.stringify({
+    type: l.type, name: l.name, corners: l.corners, aspect: l.aspect,
+    touched: l.touched, masks: l.masks, calib: l.calib, opacity: l.opacity,
+    visible: l.visible, muted: l.muted, color: l.color
+  }));
+}
+
+/* correr encuadre y máscaras juntos, para que la copia no tape al original */
+function offsetMeta(meta, d) {
+  meta.corners = meta.corners.map(c => [c[0] + d, c[1] + d]);
+  for (const m of (meta.masks || []))
+    m.pts = keepFlags(m.pts.map(c => [c[0] + d, c[1] + d]), m.pts);
+  return meta;
+}
+
+async function insertLayer(meta, blob, at) {
+  const l = Object.assign(newLayer(meta.type, meta.name), meta,
+    { el: null, wrap: null, media: null });
   if (blob) putFile(l.id, blob).catch(() => {});
   buildElement(l, blob);
-  layers.splice(layers.indexOf(src) + 1, 0, l);
+  layers.splice(at === undefined ? layers.length : at, 0, l);
   selectedId = l.id; activeCorner = null; maskIdx = null;
   renderAll(); save();
+  return l;
+}
+
+const layerBlob = l => (l.type === 'video' || l.type === 'image') ? getFile(l.id) : Promise.resolve(null);
+
+async function duplicateLayer(src) {
+  await insertLayer(offsetMeta(layerMeta(src), 0.02), await layerBlob(src),
+    layers.indexOf(src) + 1);
+}
+
+/* ---- portapapeles de capas (dura lo que dura la sesión) ---- */
+let clipboard = null;
+
+async function copyLayer(l) {
+  // el blob es una referencia al archivo, no una copia: sale barato guardarlo
+  clipboard = { meta: layerMeta(l), blob: await layerBlob(l) };
+  $('#btnPaste').hidden = false;
+  flash(`Capa copiada: ${l.name}`);
+}
+
+async function cutLayer(l) {
+  if (l.locked) { flash('La capa está bloqueada'); return; }
+  await copyLayer(l);
+  deleteLayer(l);
+}
+
+async function pasteLayer() {
+  if (!clipboard) { flash('No hay nada copiado'); return; }
+  // cada pegada se corre un poco más, así no se apilan exactamente
+  clipboard.meta = offsetMeta(clipboard.meta, 0.02);
+  await insertLayer(JSON.parse(JSON.stringify(clipboard.meta)), clipboard.blob);
 }
 
 /* ================= render UI ================= */
@@ -736,6 +798,7 @@ function renderAll() {
   // z-order: layers[0] abajo
   for (const l of layers) stage.appendChild(l.wrap);
   $('#empty').style.display = layers.length ? 'none' : '';
+  $('#btnPaste').hidden = !clipboard;
   renderList();
   renderProps();
   updateOverlay();
@@ -826,7 +889,12 @@ function renderProps() {
     'poner otro contenido en esta capa conservando esquinas y máscara', () => {
     replaceTarget = l; $('#fileReplace').click();
   }));
-  box.appendChild(btn('⧉ Duplicar (Ctrl+D)', 'copiar esta capa con su encuadre y máscara', () => duplicateLayer(l)));
+  const crow = document.createElement('div');
+  crow.className = 'row';
+  crow.style.margin = '0';
+  crow.appendChild(btn('⧉ Duplicar', 'copiar esta capa acá mismo (Ctrl+D)', () => duplicateLayer(l)));
+  crow.appendChild(btn('⎘ Copiar', 'copiar para pegarla las veces que quieras (Ctrl+C)', () => copyLayer(l)));
+  box.appendChild(crow);
 
   const lab = document.createElement('label');
   lab.textContent = 'Opacidad';
@@ -1227,6 +1295,9 @@ window.addEventListener('keydown', e => {
       if (dl && !dl.locked) duplicateLayer(dl);
       return;
     }
+    if (k === 'c') { const cl = selected(); if (cl) { e.preventDefault(); copyLayer(cl); } return; }
+    if (k === 'x') { const xl = selected(); if (xl) { e.preventDefault(); cutLayer(xl); } return; }
+    if (k === 'v') { e.preventDefault(); pasteLayer(); return; }
   }
   if (e.target.tagName === 'INPUT') return;   // no pisar sliders/color
   if (e.key === 'h' || e.key === 'H') { $('#tuto').classList.toggle('open'); return; }
@@ -1323,6 +1394,7 @@ $('#btnProject').onclick = toggleProject;
 $('#btnAddFile').onclick = () => $('#fileInput').click();
 $('#btnAddColor').onclick = () => addSimpleLayer('color');
 $('#btnTest').onclick = toggleTest;
+$('#btnPaste').onclick = () => pasteLayer();
 $('#btnAddFrame').onclick = () => {
   // capa vacía que nace calibrando: el molde donde después se pega el video
   const l = newLayer('color', 'Cuadro');

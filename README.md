@@ -43,7 +43,9 @@ cada una con 4 esquinas arrastrables (warp con perspectiva real vía `matrix3d`)
 - `Ctrl+Z` deshace y `Ctrl+Shift+Z` rehace cualquier cambio de capas.
 - Candado 🔒 por capa: bloqueada no se mueve, no se borra y los clicks la
   atraviesan.
-- `Ctrl+D` duplica la capa seleccionada (con encuadre, máscara y contenido).
+- `Ctrl+D` duplica la capa seleccionada (con encuadre, máscaras y contenido).
+- `Ctrl+C` copia una capa y `Ctrl+V` la pega, todas las veces que quieras
+  (cada copia sale un poco corrida). `Ctrl+X` corta.
 - Doble click en el nombre de una capa para renombrarla.
 
 ## Calibración por capa
