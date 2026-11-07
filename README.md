@@ -112,6 +112,10 @@ Cada máscara es un contorno editable que recorta la capa.
   (Shift+rueda) nunca lo deforman. Arrastrar una esquina sí lo deforma: eso es
   a propósito, sirve para compensar el ángulo del proyector contra el objeto.
   `R` vuelve a la proporción original.
+- **↻ Girar 180°** y **⇆ Espejo** (panel de la capa) dan vuelta el video o la
+  imagen adentro de su cuadro, sin tocar esquinas ni máscaras. Para videos que
+  se ven patas arriba o con los subtítulos espejados (proyector en el techo o
+  retroproyección). Los dos juntos = espejo vertical.
 - Los videos quedan en loop automáticamente.
 - El proyecto (capas, esquinas, opacidades) se guarda solo en el navegador:
   al reabrir la página sigue todo donde estaba, incluidos los archivos

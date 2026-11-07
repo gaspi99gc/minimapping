@@ -72,6 +72,7 @@
   #props input[type=range] { flex: 1; }
   #props input[type=color] { width: 100%; height: 28px; border: none;
     background: none; cursor: pointer; }
+  #panel button.on { border-color: #4ecbff; color: #4ecbff; background: rgba(78,203,255,.12); }
 
   /* ---- extras ---- */
   #flash { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%);
@@ -200,6 +201,11 @@
        Rueda: <b>escalar</b> · <kbd>Shift</kbd>+rueda: <b>rotar</b>.</p>
     <p>Flechas: ajuste fino de a 1px (<kbd>Shift</kbd> = de a 10). Mueven la esquina que tocaste último, o toda la capa.</p>
     <p><kbd>R</kbd>: vuelve a la proporción original del video, centrado.</p>
+    <p><b>↻ Girar 180°</b> y <b>⇆ Espejo</b> (en el panel) dan vuelta el video
+       adentro de su cuadro, sin mover el encuadre ni las máscaras. Sirven cuando
+       un video se ve patas arriba o con los subtítulos espejados (por ejemplo,
+       con el proyector colgado del techo o proyectando desde atrás de la tela).
+       Los dos juntos equivalen a un espejo vertical.</p>
 
     <h3>Esquinas (perspectiva)</h3>
     <p>Los puntos <b style="color:#4ecbff">celestes</b> redondos deforman la capa para calzarla
@@ -382,7 +388,9 @@ function newLayer(type, name) {
     locked: false,    // true = la capa no se puede mover, deformar ni borrar
     group: null,      // id de grupo: las capas del mismo grupo se mueven juntas
     calib: false,     // true = mostrar patron de calibracion en lugar del contenido
-    masks: [],        // lista de {pts, sub}: contornos de recorte en coords de pantalla
+    rot180: false,    // contenido girado 180° dentro de su cuadro (el encuadre no se mueve)
+    mirror: false,    // contenido espejado de izquierda a derecha
+    masks: [],       // lista de {pts, sub}: contornos de recorte en coords de pantalla
                       // (normalizadas). sub=false muestra, sub=true tapa (agujero)
     el: null, wrap: null, media: null
   };
@@ -473,6 +481,11 @@ function syncLayerStyle(l) {
   l.wrap.style.opacity = l.calib ? 1 : l.opacity;   // calibrando, a plena potencia
   l.wrap.style.display = l.visible ? '' : 'none';
   l.el.classList.toggle('calib', !!l.calib);
+  // girar/espejar solo el contenido: esquinas y máscaras quedan donde están
+  if (l.media) {
+    const sx = (l.rot180 ? -1 : 1) * (l.mirror ? -1 : 1), sy = l.rot180 ? -1 : 1;
+    l.media.style.transform = (sx === 1 && sy === 1) ? '' : `scale(${sx}, ${sy})`;
+  }
 }
 
 /* Un punto de máscara es [x, y] (esquina) o [x, y, 1] (curva). Las operaciones
@@ -669,6 +682,7 @@ function metaString() {
   return JSON.stringify({ layers: layers.map(l => ({
     id: l.id, type: l.type, name: l.name, corners: l.corners,
     aspect: l.aspect, touched: l.touched, masks: l.masks, calib: l.calib,
+    rot180: l.rot180, mirror: l.mirror,
     locked: l.locked, group: l.group,
     opacity: l.opacity, visible: l.visible, muted: l.muted, color: l.color
   })) });
@@ -810,6 +824,7 @@ function layerMeta(l) {
   return JSON.parse(JSON.stringify({
     type: l.type, name: l.name, corners: l.corners, aspect: l.aspect,
     touched: l.touched, masks: l.masks, calib: l.calib, opacity: l.opacity,
+    rot180: l.rot180, mirror: l.mirror,
     visible: l.visible, muted: l.muted, color: l.color
   }));
 }
@@ -894,7 +909,7 @@ function renderList() {
     const i = layers.indexOf(l);
     const item = document.createElement('div');
     item.className = 'item' + (selectedIds.has(l.id) ? ' sel' : '') + (l.id === selectedId ? ' primary' : '');
-    item.onclick = () => {
+    item.onclick = e => {
       if (selectedId !== l.id) maskIdx = null;
       selectLayer(l, e.ctrlKey || e.metaKey); renderAll();
     };
@@ -987,6 +1002,22 @@ function renderProps() {
   crow.appendChild(btn('⧉ Duplicar', 'copiar esta capa acá mismo (Ctrl+D)', () => duplicateLayer(l)));
   crow.appendChild(btn('⎘ Copiar', 'copiar para pegarla las veces que quieras (Ctrl+C)', () => copyLayer(l)));
   box.appendChild(crow);
+
+  if (l.type === 'video' || l.type === 'image') {
+    const frow = document.createElement('div');
+    frow.className = 'row';
+    frow.style.margin = '0';
+    const rot = btn('↻ Girar 180°', 'dar vuelta el contenido (si se ve patas arriba)', () => {
+      l.rot180 = !l.rot180; syncLayerStyle(l); renderProps(); save();
+    });
+    const mir = btn('⇆ Espejo', 'espejar el contenido (si las letras se leen al revés)', () => {
+      l.mirror = !l.mirror; syncLayerStyle(l); renderProps(); save();
+    });
+    rot.classList.toggle('on', !!l.rot180);
+    mir.classList.toggle('on', !!l.mirror);
+    frow.append(rot, mir);
+    box.appendChild(frow);
+  }
 
   const lab = document.createElement('label');
   lab.textContent = 'Opacidad';
